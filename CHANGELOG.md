@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.1
+
+- Add a macOS Tahoe inspired liquid glass visual refresh with layered translucent surfaces and tinted accents.
+
+
 ## v1.2.0
 
 - Refresh typography, navigation and tablet/mobile drawers.
