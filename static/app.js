@@ -242,13 +242,15 @@ async function openChat(chat) {
   if (!guardNavigation()) return;
   loading=true;
   try {
-    await saveDraft(); activeChat=chat.id; currentChat=chat;
+    await saveDraft();
+    const [rows, saved] = await Promise.all([api(`/api/chats/${chat.id}/messages`),api(`/api/chats/${chat.id}/draft`)]);
+    let local=null;try{local=sessionStorage.getItem(`studio-draft:${$('.shell').dataset.userId}:${chat.id}`);}catch{}
+    activeChat=chat.id; currentChat=chat;
     selectedModel={provider_id:chat.selected_provider || '',model:chat.selected_model || ''}; renderModelOptions();
-    pendingFiles=[]; renderPendingFiles();
-    const rows=await api(`/api/chats/${chat.id}/messages`);
-    messagesEl.replaceChildren(); welcomeEl.hidden=!!rows.length;
-    for(const m of rows) { const target=renderMessage(m.role,m.content,m.attachments || []); if(m.role==='assistant') codeButtons(target); }
-    await restoreDraft(chat.id); setChatControls(); await refreshChats(); followLatest=true; scrollReply(); closeSidebar();
+    pendingFiles=[];renderPendingFiles();messagesEl.replaceChildren();welcomeEl.hidden=!!rows.length;
+    for(const m of rows){const target=renderMessage(m.role,m.content,m.attachments || []);if(m.role==='assistant')codeButtons(target);}
+    inputEl.value=local ?? saved.draft ?? '';resizeInput();setChatControls();
+    await refreshChats();followLatest=true;scrollReply();closeSidebar();
   } finally { loading=false; }
 }
 function renderPendingFiles() {
@@ -316,6 +318,7 @@ async function send(text) {
     row.append(action('恢复输入',()=>{inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();return saveDraft();}));
     (target?.parentElement || messagesEl).append(row);
     if(target&&!target.dataset.source)target.textContent='';
+    if(!inputEl.value){inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();try{await saveDraft();}catch{notify('Draft sync failed');}}
   }finally{
     busy=false;modelSelect.disabled=false;$('#sendButton').disabled=false;$('#stopButton').hidden=true;
     try{await refreshChats();}catch(e){notify(e.message);}scrollReply();
