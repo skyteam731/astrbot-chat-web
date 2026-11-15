@@ -378,34 +378,6 @@ def preview_attachment(attachment_id):
         abort(502)
 
 
-def extract_text(payload):
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
-            return payload
-    if isinstance(payload, dict):
-        for key in ("delta", "text", "content", "answer", "message_str"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                return value
-            if isinstance(value, dict):
-                found = extract_text(value)
-                if found:
-                    return found
-        for key in ("data", "message", "choices"):
-            value = payload.get(key)
-            if isinstance(value, str) and key == "data":
-                return value
-            if isinstance(value, (dict, list)):
-                found = extract_text(value)
-                if found:
-                    return found
-    if isinstance(payload, list):
-        return "".join(extract_text(item) for item in payload)
-    return ""
-
-
 @app.post("/api/chats/<chat_id>/send")
 @login_required
 def send_message(chat_id):
@@ -452,6 +424,8 @@ def send_message(chat_id):
                     detail = upstream.text[:1000]
                     yield "data: " + json.dumps({"error": f"AstrBot 返回 {upstream.status_code}: {detail}"}, ensure_ascii=False) + "\n\n"
                     return
+                streamed_parts = []
+                final_answer = None
                 for line in upstream.iter_lines(decode_unicode=True):
                     if not line:
                         continue
@@ -459,12 +433,29 @@ def send_message(chat_id):
                         raw = line[5:].strip()
                         if raw == "[DONE]":
                             continue
-                        text = extract_text(raw)
-                        if text:
-                            collected.append(text)
-                            yield "data: " + json.dumps({"text": text}, ensure_ascii=False) + "\n\n"
+                        try:
+                            event = json.loads(raw)
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        event_type = event.get("type") if isinstance(event, dict) else None
+                        if event_type == "plain":
+                            if event.get("chain_type") in ("reasoning", "tool_call", "tool_call_result"):
+                                continue
+                            text = str(event.get("data") or "")
+                            if text:
+                                streamed_parts.append(text)
+                                yield "data: " + json.dumps({"text": text}, ensure_ascii=False) + "\n\n"
+                        elif event_type == "complete":
+                            final_answer = str(event.get("data") or "") or "".join(streamed_parts)
+                            yield "data: " + json.dumps({"final": final_answer}, ensure_ascii=False) + "\n\n"
+                        elif event_type == "error":
+                            detail = str(event.get("data") or "AstrBot 处理失败")
+                            yield "data: " + json.dumps({"error": detail}, ensure_ascii=False) + "\n\n"
+                            return
+                collected = [final_answer if final_answer is not None else "".join(streamed_parts)]
         except Exception as exc:
             yield "data: " + json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n\n"
+            collected = []
         answer = "".join(collected)
         with db_lock:
             with sqlite3.connect(DB_PATH, timeout=30) as conn:
