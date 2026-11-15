@@ -103,3 +103,5 @@ body{background:radial-gradient(ellipse at 4% 4%,rgba(211,218,255,.72),transpare
 @media(max-width:900px){.sidebar{background:rgba(255,255,255,.75)!important}}
 @media(max-width:560px){.sidebar{background:rgba(255,255,255,.75)!important}.main{background:rgba(255,255,255,.75)!important}}
 @media(prefers-reduced-transparency:reduce){.sidebar,.main,.login-card{backdrop-filter:none;-webkit-backdrop-filter:none;background:#f7f7fa!important}}
+/* Keep the glass drawer out of the mobile flex layout. */
+@media(max-width:900px){.sidebar{position:fixed!important;inset:0 auto 0 0;transform:translateX(-105%)}body.sidebar-open .sidebar{transform:translateX(0)}}
