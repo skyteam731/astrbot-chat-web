@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.2
+
+- Set the login card, history sidebar and chat window to liquid glass surfaces with approximately 75% opacity.
+
+
 ## v1.2.1
 
 - Add a macOS Tahoe inspired liquid glass visual refresh with layered translucent surfaces and tinted accents.
