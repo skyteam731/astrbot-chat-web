@@ -61,6 +61,9 @@ def init_db():
             title TEXT NOT NULL DEFAULT '新对话',
             selected_provider TEXT NOT NULL DEFAULT '',
             selected_model TEXT NOT NULL DEFAULT '',
+            pinned INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            draft TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -84,7 +87,7 @@ def init_db():
     conn.execute("BEGIN IMMEDIATE")
     migrations = {
         "users": {"real_name": "TEXT NOT NULL DEFAULT ''", "session_version": "INTEGER NOT NULL DEFAULT 1"},
-        "chats": {"selected_provider": "TEXT NOT NULL DEFAULT ''", "selected_model": "TEXT NOT NULL DEFAULT ''"},
+        "chats": {"selected_provider": "TEXT NOT NULL DEFAULT ''", "selected_model": "TEXT NOT NULL DEFAULT ''", "pinned": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "draft": "TEXT NOT NULL DEFAULT ''"},
         "messages": {"attachments_json": "TEXT NOT NULL DEFAULT '[]'"},
     }
     for table, columns in migrations.items():
@@ -239,7 +242,21 @@ def logout():
 @app.get("/api/chats")
 @login_required
 def list_chats():
-    rows = db().execute("SELECT id,title,selected_provider,selected_model,updated_at FROM chats WHERE user_id=? ORDER BY updated_at DESC", (g.user["id"],)).fetchall()
+    archived = request.args.get("archived", "0")
+    if archived not in ("0", "1"):
+        return jsonify(error="archived 参数必须为 0 或 1。"), 400
+    query = request.args.get("q", "").strip()
+    if not isinstance(query, str):
+        return jsonify(error="q 参数必须为字符串。"), 400
+    sql = "SELECT c.id,c.title,c.selected_provider,c.selected_model,c.pinned,c.archived,c.updated_at FROM chats c WHERE c.user_id=? AND c.archived=?"
+    params = [g.user["id"], int(archived)]
+    if query:
+        sql += " AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id=c.id AND m.content LIKE ? ESCAPE '\\'))"
+        escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped_query}%"
+        params.extend((pattern, pattern))
+    sql += " ORDER BY c.pinned DESC,c.updated_at DESC"
+    rows = db().execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -294,20 +311,69 @@ def list_models():
 @app.patch("/api/chats/<chat_id>")
 @login_required
 def update_chat(chat_id):
-    body = request.get_json(silent=True) or {}
-    provider, model = str(body.get("selected_provider", ""))[:200], str(body.get("selected_model", ""))[:200]
-    if provider or model:
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="请求内容必须是 JSON 对象。"), 400
+    owner = db().execute("SELECT selected_provider,selected_model FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone()
+    if not owner:
+        abort(404)
+
+    updates = {}
+    if "title" in body:
+        title = body["title"]
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120:
+            return jsonify(error="title 必须为 1 到 120 个字符。"), 400
+        updates["title"] = title.strip()
+    for field in ("pinned", "archived"):
+        if field in body:
+            if type(body[field]) is not bool:
+                return jsonify(error=f"{field} 必须为布尔值。"), 400
+            updates[field] = int(body[field])
+    if "draft" in body:
+        draft = body["draft"]
+        if not isinstance(draft, str) or len(draft) > 20000:
+            return jsonify(error="draft 必须为不超过 20000 个字符的字符串。"), 400
+        updates["draft"] = draft
+
+    provider, model = owner["selected_provider"], owner["selected_model"]
+    if "selected_provider" in body:
+        if not isinstance(body["selected_provider"], str) or len(body["selected_provider"]) > 200:
+            return jsonify(error="selected_provider 必须为不超过 200 个字符的字符串。"), 400
+        provider = body["selected_provider"]
+        updates["selected_provider"] = provider
+    if "selected_model" in body:
+        if not isinstance(body["selected_model"], str) or len(body["selected_model"]) > 200:
+            return jsonify(error="selected_model 必须为不超过 200 个字符的字符串。"), 400
+        model = body["selected_model"]
+        updates["selected_model"] = model
+    if ("selected_provider" in body or "selected_model" in body) and (provider or model):
         try:
             valid = any(item.get("enable", True) and item.get("provider_type") == "chat_completion" and item.get("id") == provider and item.get("model") == model for item in provider_records())
         except requests.RequestException:
             return jsonify(error="暂时无法读取可用模型。"), 502
         if not valid:
             return jsonify(error="所选模型当前不可用。"), 400
-    cur = db().execute("UPDATE chats SET selected_provider=?,selected_model=?,updated_at=? WHERE id=? AND user_id=?", (provider, model, now(), chat_id, g.user["id"]))
+    if not updates:
+        return jsonify(ok=True)
+    # Draft autosaves must not change the ordering timestamp of chat history.
+    ordering_updates = set(updates) - {"draft"}
+    if ordering_updates:
+        updates["updated_at"] = now()
+    assignments = ",".join(f"{column}=?" for column in updates)
+    cur = db().execute(f"UPDATE chats SET {assignments} WHERE id=? AND user_id=?", (*updates.values(), chat_id, g.user["id"]))
     db().commit()
     if not cur.rowcount:
         abort(404)
     return jsonify(ok=True)
+
+
+@app.get("/api/chats/<chat_id>/draft")
+@login_required
+def get_chat_draft(chat_id):
+    row = db().execute("SELECT draft FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone()
+    if not row:
+        abort(404)
+    return jsonify(draft=row["draft"] or "")
 
 
 @app.get("/api/chats/<chat_id>/messages")
@@ -373,7 +439,7 @@ def preview_attachment(attachment_id):
         response = requests.get(f"{ASTRBOT_URL}/api/v1/file", params={"attachment_id": attachment_id}, headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=30)
         if response.status_code >= 400:
             abort(response.status_code)
-        return Response(response.content, mimetype=row["mimetype"], headers={"Cache-Control": "private, max-age=3600", "Content-Disposition": "inline"})
+        return Response(response.content, mimetype=row["mimetype"], headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" if row["mimetype"] in ("image/png", "image/jpeg", "image/gif", "image/webp") and not request.args.get("download") else "attachment"})
     except requests.RequestException:
         abort(502)
 
@@ -381,7 +447,9 @@ def preview_attachment(attachment_id):
 @app.post("/api/chats/<chat_id>/send")
 @login_required
 def send_message(chat_id):
-    body = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="Invalid message payload"), 400
     message = str(body.get("message", "")).strip()
     requested_attachments = body.get("attachments", [])
     if (not message and not requested_attachments) or len(message) > 20000:
@@ -393,6 +461,8 @@ def send_message(chat_id):
         abort(404)
     attachments = []
     for item in requested_attachments:
+        if not isinstance(item, dict):
+            return jsonify(error="Invalid attachment payload"), 400
         attachment_id = str((item or {}).get("id", ""))
         row = db().execute("SELECT attachment_id,filename,mimetype FROM attachments WHERE attachment_id=? AND user_id=?", (attachment_id, g.user["id"])).fetchone()
         if not row:
@@ -468,9 +538,35 @@ def send_message(chat_id):
     return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.post("/api/chats/<chat_id>/stop")
+@login_required
+def stop_chat(chat_id):
+    if not db().execute("SELECT id FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone():
+        abort(404)
+    try:
+        response = requests.post(f"{ASTRBOT_URL}/api/v1/chat/sessions/{chat_id}/stop", params={"username": f"mtu_{g.user['id']}"}, headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=15)
+        response.raise_for_status()
+        result = response.json()
+        if isinstance(result, dict) and result.get("status") == "error":
+            return jsonify(error="停止请求未成功，请稍后重试。"), 502
+        return jsonify(ok=True)
+    except (requests.RequestException, ValueError):
+        return jsonify(error="暂时无法停止上游任务，请稍后重试。"), 502
+
+
 @app.delete("/api/chats/<chat_id>")
 @login_required
 def delete_chat(chat_id):
+    if not db().execute("SELECT id FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone():
+        abort(404)
+    try:
+        response = requests.delete(f"{ASTRBOT_URL}/api/v1/chat/sessions/{chat_id}", params={"username": f"mtu_{g.user['id']}"}, headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=15)
+        if response.status_code != 404:
+            response.raise_for_status()
+            if response.content and response.json().get("status") == "error":
+                return jsonify(error="上游记录删除失败，请重试。"), 502
+    except (requests.RequestException, ValueError):
+        return jsonify(error="暂时无法删除上游记录，请稍后重试。"), 502
     db().execute("DELETE FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"]))
     db().commit()
     return "", 204
