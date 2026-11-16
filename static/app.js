@@ -142,221 +142,217 @@ async function loadModels() {
   }
 }
 
-function renderAttachments(container, attachments = []) {
-  if (!attachments.length) return;
-  const box = document.createElement('div');
-  box.className = 'message-files';
-  for (const attachment of attachments) {
-    if (attachment.kind === 'image' || (attachment.mimetype || '').startsWith('image/')) {
-      const image = document.createElement('img');
-      image.className = 'message-image';
-      image.src = `/api/attachments/${encodeURIComponent(attachment.id)}`;
-      image.alt = attachment.filename || '图片';
-      image.loading = 'lazy';
-      image.onclick = () => window.open(image.src, '_blank', 'noopener');
-      box.append(image);
-    } else {
-      const file = document.createElement('div');
-      file.className = 'file-card';
-      file.innerHTML = `<span class="file-icon">▤</span><span><b>${esc(attachment.filename || '附件')}</b><small>已添加</small></span>`;
-      box.append(file);
-    }
-  }
-  container.append(box);
-}
 
+const $ = selector => document.querySelector(selector);
+const viewport = $('#conversation');
+let currentChat = null, followLatest = true, loading = false, listRevision = 0;
+let uploading = 0, draftTimer, draftChain = Promise.resolve();
+const draftKey = () => `studio-draft:${$('.shell').dataset.userId}:${activeChat || 'new'}`;
+function notify(message) { $('#notice').textContent = message; $('#notice').hidden = !message; }
+function action(label, callback) {
+  const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+  button.onclick = () => Promise.resolve().then(callback).catch(error => notify(error.message)); return button;
+}
+function resizeInput() { inputEl.style.height = 'auto'; inputEl.style.height = `${Math.min(inputEl.scrollHeight, 160)}px`; }
+function saveDraft() {
+  clearTimeout(draftTimer);
+  try { sessionStorage.setItem(draftKey(), inputEl.value); } catch {}
+  if (!activeChat) return draftChain;
+  const id = activeChat, draft = inputEl.value;
+  draftChain = draftChain.catch(() => {}).then(() => api(`/api/chats/${id}`, {method:'PATCH',body:JSON.stringify({draft})}));
+  return draftChain;
+}
+async function restoreDraft(id) {
+  let local = null; try { local = sessionStorage.getItem(draftKey()); } catch {}
+  const saved = id ? await api(`/api/chats/${id}/draft`) : {draft:''};
+  inputEl.value = local ?? saved.draft ?? ''; resizeInput();
+}
+function scrollReply() {
+  if (followLatest) viewport.scrollTop = viewport.scrollHeight;
+  $('#jumpLatest').hidden = followLatest;
+}
+viewport.addEventListener('scroll', () => {
+  followLatest = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 90;
+  $('#jumpLatest').hidden = followLatest;
+});
+$('#jumpLatest').onclick = () => { followLatest = true; scrollReply(); };
+async function copyText(text, button) {
+  try { await navigator.clipboard.writeText(text); button.textContent = '已复制'; setTimeout(() => button.textContent = '复制', 1500); }
+  catch { notify('复制失败，请选择文本后复制。'); }
+}
+function renderAttachments(container, attachments = []) {
+  const box = document.createElement('div'); box.className = 'message-files';
+  for (const attachment of attachments) {
+    const link = document.createElement('a'); link.target = '_blank'; link.rel = 'noopener';
+    link.href = `/api/attachments/${encodeURIComponent(attachment.id)}`;
+    if (attachment.kind === 'image' || (attachment.mimetype || '').startsWith('image/')) {
+      const image = document.createElement('img'); image.className = 'message-image'; image.src = link.href;
+      image.alt = attachment.filename || '图片'; image.loading = 'lazy'; link.append(image);
+    } else { link.className = 'file-card'; link.textContent = `${attachment.filename || '附件'} · 下载`; link.href += '?download=1'; }
+    box.append(link);
+  }
+  if (attachments.length) container.append(box);
+}
 function renderMessage(role, content, attachments = []) {
-  const article = document.createElement('article');
-  article.className = `message ${role}`;
-  const messageContent = document.createElement('div');
-  messageContent.className = 'message-content';
-  const text = document.createElement('div');
-  text.className = 'message-text';
-  if (role === 'assistant') renderMarkdown(text, content || '');
-  else text.innerHTML = esc(content || '').replace(/\n/g, '<br>');
-  messageContent.append(text);
-  renderAttachments(messageContent, attachments);
-  article.append(messageContent);
-  messagesEl.append(article);
+  const article = document.createElement('article'); article.className = `message ${role}`;
+  const box = document.createElement('div'); box.className = 'message-content';
+  const text = document.createElement('div'); text.className = 'message-text'; text.dataset.source = content || '';
+  if (role === 'assistant') renderMarkdown(text, content || ''); else text.textContent = content || '';
+  const actions = document.createElement('div'); actions.className = 'message-actions';
+  const copy = action('复制', () => copyText(text.dataset.source, copy)); actions.append(copy);
+  box.append(text); renderAttachments(box, attachments); box.append(actions); article.append(box); messagesEl.append(article);
   return text;
 }
-
+function codeButtons(target) {
+  for (const pre of target.querySelectorAll('pre')) {
+    const code = pre.querySelector('code'); const button = action('复制', () => copyText(code?.textContent || '', button));
+    button.className = 'code-copy'; pre.append(button);
+  }
+}
+function setChatControls() {
+  $('.page-title').textContent = currentChat?.title || '新对话';
+  for (const id of ['deleteChat','renameChat','pinChat','archiveChat']) $('#'+id).hidden = !activeChat;
+  $('#pinChat').textContent = currentChat?.pinned ? '取消置顶' : '置顶对话';
+  $('#archiveChat').textContent = currentChat?.archived ? '移出归档' : '归档对话';
+}
 async function refreshChats() {
-  const chats = await api('/api/chats');
-  listEl.innerHTML = '';
+  const revision = ++listRevision;
+  const archived = $('#showArchived').checked ? 1 : 0;
+  const chats = await api(`/api/chats?q=${encodeURIComponent($('#chatSearch').value)}&archived=${archived}`);
+  if (revision !== listRevision) return;
+  const updated=chats.find(c=>c.id===activeChat); if(updated){currentChat=updated;setChatControls();}
+  listEl.replaceChildren();
+  if (!chats.length) { const empty = document.createElement('p'); empty.className='empty-history'; empty.textContent='没有找到对话'; listEl.append(empty); }
+  let lastGroup = '';
   for (const chat of chats) {
-    const button = document.createElement('button');
-    button.className = `chat-item${activeChat === chat.id ? ' active' : ''}`;
-    button.textContent = chat.title;
-    button.onclick = () => openChat(chat.id);
-    listEl.append(button);
+    const date = new Date(chat.updated_at), today = new Date();
+    const group = chat.pinned ? '置顶' : date.toDateString() === today.toDateString() ? '今天' : '更早';
+    if(group !== lastGroup) { const label=document.createElement('div'); label.className='side-label'; label.textContent=group; listEl.append(label); lastGroup=group; }
+    const button = action(chat.title, () => openChat(chat)); button.className=`chat-item chat-row${activeChat===chat.id?' active':''}`;
+    button.title=chat.title; listEl.append(button);
   }
 }
-
+function guardNavigation() { if (busy || uploading || loading) { notify('请先停止当前回复或等待上传完成。'); return false; } return true; }
 async function newChat() {
-  const chat = await api('/api/chats', {
-    method: 'POST',
-    body: JSON.stringify({ selected_provider: selectedModel.provider_id, selected_model: selectedModel.model })
-  });
-  activeChat = chat.id;
-  messagesEl.innerHTML = '';
-  welcomeEl.hidden = false;
-  deleteButton.hidden = false;
-  await refreshChats();
-  modelSelect.disabled = false;
-  return chat;
+  if (!guardNavigation()) return;
+  await saveDraft(); activeChat=null; currentChat=null; pendingFiles=[]; renderPendingFiles();
+  messagesEl.replaceChildren(); welcomeEl.hidden=false; setChatControls(); await restoreDraft(null); closeSidebar();
 }
-
-async function openChat(id) {
-  activeChat = id;
-  pendingFiles = [];
-  renderPendingFiles();
-  const chats = await api('/api/chats');
-  const chat = chats.find(item => item.id === id);
-  selectedModel = chat?.selected_provider
-    ? { provider_id: chat.selected_provider, model: chat.selected_model }
-    : { provider_id: '', model: '' };
-  renderModelOptions();
-  messagesEl.innerHTML = '';
-  welcomeEl.hidden = true;
-  deleteButton.hidden = false;
-  const rows = await api(`/api/chats/${id}/messages`);
-  if (!rows.length) welcomeEl.hidden = false;
-  for (const message of rows) renderMessage(message.role, message.content, message.attachments || []);
-  await refreshChats();
-  messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-}
-
-function renderPendingFiles() {
-  pendingEl.innerHTML = '';
-  for (const [index, file] of pendingFiles.entries()) {
-    const item = document.createElement('div');
-    item.className = 'pending-file';
-    if (file.kind === 'image') item.innerHTML = `<img src="/api/attachments/${encodeURIComponent(file.id)}" alt=""><span>${esc(file.filename)}</span>`;
-    else item.innerHTML = `<span class="file-icon">▤</span><span>${esc(file.filename)}</span>`;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.textContent = '×';
-    remove.onclick = () => { pendingFiles.splice(index, 1); renderPendingFiles(); };
-    item.append(remove);
-    pendingEl.append(item);
-  }
-}
-
-async function uploadFiles(files) {
-  for (const file of files) {
-    if (pendingFiles.length >= 8) { alert('一次最多添加 8 个文件。'); break; }
-    const form = new FormData();
-    form.append('file', file);
-    try {
-      pendingFiles.push(await api('/api/upload', { method: 'POST', body: form }));
-      renderPendingFiles();
-    } catch (error) { alert(`${file.name}：${error.message}`); }
-  }
-  fileInput.value = '';
-}
-
-async function send(text) {
-  text = text.trim();
-  if ((!text && !pendingFiles.length) || busy) return;
-  if (!activeChat) await newChat();
-  busy = true;
-  const attachments = [...pendingFiles];
-  pendingFiles = [];
-  renderPendingFiles();
-  inputEl.value = '';
-  inputEl.style.height = 'auto';
-  welcomeEl.hidden = true;
-  renderMessage('user', text, attachments);
-  const target = renderMessage('assistant', '');
-  const bubble = target.parentElement;
-  const spinner = document.createElement('span');
-  spinner.className = 'typing';
-  spinner.textContent = '正在处理…';
-  bubble.append(spinner);
-  document.querySelector('#sendButton').disabled = true;
-  let liveText = '';
+async function openChat(chat) {
+  if (!guardNavigation()) return;
+  loading=true;
   try {
-    const response = await fetch(`/api/chats/${activeChat}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ message: text, attachments })
-    });
-    if (!response.ok) {
-      let payload = {};
-      try { payload = await response.json(); } catch {}
-      throw new Error(payload.error || '发送失败');
+    await saveDraft();
+    const [rows, saved] = await Promise.all([api(`/api/chats/${chat.id}/messages`),api(`/api/chats/${chat.id}/draft`)]);
+    let local=null;try{local=sessionStorage.getItem(`studio-draft:${$('.shell').dataset.userId}:${chat.id}`);}catch{}
+    activeChat=chat.id; currentChat=chat;
+    selectedModel={provider_id:chat.selected_provider || '',model:chat.selected_model || ''}; renderModelOptions();
+    pendingFiles=[];renderPendingFiles();messagesEl.replaceChildren();welcomeEl.hidden=!!rows.length;
+    for(const m of rows){const target=renderMessage(m.role,m.content,m.attachments || []);if(m.role==='assistant')codeButtons(target);}
+    inputEl.value=local ?? saved.draft ?? '';resizeInput();setChatControls();
+    await refreshChats();followLatest=true;scrollReply();closeSidebar();
+  } finally { loading=false; }
+}
+function renderPendingFiles() {
+  pendingEl.replaceChildren();
+  pendingFiles.forEach((file,index)=>{
+    const item=document.createElement('div'); item.className='pending-file';
+    if(file.kind==='image') { const img=document.createElement('img'); img.src=`/api/attachments/${encodeURIComponent(file.id)}`; img.alt=''; item.append(img); }
+    const name=document.createElement('span'); name.textContent=file.filename; item.append(name);
+    const remove=action('×',()=>{pendingFiles.splice(index,1);renderPendingFiles();}); remove.setAttribute('aria-label',`移除 ${file.filename}`); item.append(remove); pendingEl.append(item);
+  });
+}
+function uploadOne(file) {
+  return new Promise((resolve,reject)=>{
+    const row=document.createElement('div'); row.className='upload-item';
+    const label=document.createElement('span'); label.textContent=file.name;
+    const progress=document.createElement('progress'); progress.max=100; progress.value=0;
+    const xhr=new XMLHttpRequest(); const cancel=action('取消',()=>xhr.abort()); row.append(label,progress,cancel); $('#uploadQueue').append(row);
+    xhr.open('POST','/api/upload'); xhr.setRequestHeader('X-CSRF-Token',csrfToken);
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)progress.value=e.loaded/e.total*100;};
+    xhr.onload=()=>{ let data={}; try{data=JSON.parse(xhr.responseText);}catch{} row.remove();
+      if(xhr.status>=200&&xhr.status<300)resolve(data);else reject(new Error(data.error||'上传失败')); };
+    xhr.onerror=()=>{row.remove();reject(new Error('网络连接中断'));};
+    xhr.onabort=()=>{row.remove();reject(new Error('已取消上传'));};
+    const form=new FormData(); form.append('file',file); xhr.send(form);
+  });
+}
+async function uploadFiles(files) {
+  if(busy || uploading || loading){notify('请等待当前操作完成。');return;}
+  uploading++; $('#sendButton').disabled=true;
+  try { for(const file of files){
+    if(pendingFiles.length>=8){notify('一次最多添加 8 个附件。');break;}
+    if(file.size>25*1024*1024){notify(`${file.name} 超过 25 MB。`);continue;}
+    try {pendingFiles.push(await uploadOne(file));renderPendingFiles();}
+    catch(error){ const row=document.createElement('div');row.className='upload-item message-error';row.append(document.createTextNode(`${file.name}：${error.message} `));
+      row.append(action('重试',()=>{row.remove();return uploadFiles([file]);}),action('移除',()=>row.remove()));$('#uploadQueue').append(row); }
+  }} finally{uploading--;$('#sendButton').disabled=false;fileInput.value='';}
+}
+async function send(text) {
+  text=text.trim(); if((!text&&!pendingFiles.length)||busy||uploading||loading)return;
+  busy=true; notify(''); modelSelect.disabled=true; $('#sendButton').disabled=true; $('#stopButton').hidden=false;
+  const attachments=[...pendingFiles]; let target=null, complete=false;
+  try {
+    if(!activeChat){
+      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});
+      activeChat=chat.id;currentChat=chat;setChatControls();try{sessionStorage.removeItem(`studio-draft:${$('.shell').dataset.userId}:new`);}catch{}
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop();
-      for (const frame of frames) {
-        const line = frame.split('\n').find(item => item.startsWith('data:'));
-        if (!line) continue;
-        const event = JSON.parse(line.slice(5).trim());
-        if (event.error) throw new Error(event.error);
-        if (event.text) {
-          liveText += event.text;
-          target.textContent = liveText;
-          target.classList.add('streaming-text');
-          spinner.remove();
-        }
-        if (Object.hasOwn(event, 'final')) {
-          liveText = event.final || '';
-          target.classList.remove('streaming-text');
-          renderMarkdown(target, liveText);
-          spinner.remove();
-        }
-        if (event.done) spinner.remove();
-        messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
+    await saveDraft(); pendingFiles=[];renderPendingFiles();inputEl.value='';resizeInput();await saveDraft();welcomeEl.hidden=true;
+    renderMessage('user',text,attachments);target=renderMessage('assistant','');target.textContent='正在连接…';
+    followLatest=true;scrollReply();let liveText='';
+    const response=await fetch(`/api/chats/${activeChat}/send`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({message:text,attachments})});
+    if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||`发送失败 (${response.status})`);}
+    const reader=response.body.getReader(), decoder=new TextDecoder();let buffer='';
+    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const frames=buffer.split('\n\n');buffer=frames.pop();
+      for(const frame of frames){const line=frame.split('\n').find(line=>line.startsWith('data:'));if(!line)continue;const event=JSON.parse(line.slice(5));
+        if(event.error)throw new Error(event.error);
+        if(event.text){liveText+=event.text;target.textContent=liveText;target.classList.add('streaming-text');}
+        if(Object.prototype.hasOwnProperty.call(event,'final')){liveText=event.final||'';target.classList.remove('streaming-text');renderMarkdown(target,liveText);}
+        if(event.done)complete=true;target.dataset.source=liveText;scrollReply();
       }
     }
-    target.classList.remove('streaming-text');
-    if (!target.textContent) target.textContent = '（没有文本回复）';
-  } catch (error) {
-    spinner.remove();
-    target.classList.remove('streaming-text');
-    if (!target.textContent) target.textContent = `请求出错：${error.message}`;
-  } finally {
-    busy = false;
-    document.querySelector('#sendButton').disabled = false;
-    await refreshChats();
-    messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
+    if(!complete)throw new Error('连接已中断，回复可能不完整。');
+    target.classList.remove('streaming-text');renderMarkdown(target,liveText || '（本次没有文本回复）');codeButtons(target);
+  }catch(error){
+    const row=document.createElement('div');row.className='message-error';row.setAttribute('role','alert');row.textContent=error.message+' ';
+    row.append(action('恢复输入',()=>{inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();return saveDraft();}));
+    (target?.parentElement || messagesEl).append(row);
+    if(target&&!target.dataset.source)target.textContent='';
+    if(!inputEl.value){inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();try{await saveDraft();}catch{notify('Draft sync failed');}}
+  }finally{
+    busy=false;modelSelect.disabled=false;$('#sendButton').disabled=false;$('#stopButton').hidden=true;
+    try{await refreshChats();}catch(e){notify(e.message);}scrollReply();
   }
 }
-
-document.querySelector('#newChat').onclick = () => newChat();
-document.querySelector('#composer').onsubmit = event => { event.preventDefault(); send(inputEl.value); };
-inputEl.onkeydown = event => {
-  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(inputEl.value); }
+$('#stopButton').onclick=async()=>{
+  if(!activeChat)return;$('#stopButton').disabled=true;
+  try{await api(`/api/chats/${activeChat}/stop`,{method:'POST'});notify('已请求停止生成。');}
+  catch(e){notify(e.message);}finally{$('#stopButton').disabled=false;}
 };
-inputEl.oninput = () => { inputEl.style.height = 'auto'; inputEl.style.height = `${Math.min(inputEl.scrollHeight, 140)}px`; };
-modelSelect.onchange = async () => {
-  selectedModel = selectModelValue(modelSelect.value);
-  if (activeChat) {
-    try {
-      await api(`/api/chats/${activeChat}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ selected_provider: selectedModel.provider_id, selected_model: selectedModel.model })
-      });
-    } catch (error) { alert(error.message); }
-  }
+function closeSidebar(){document.body.classList.remove('sidebar-open');$('#sidebarToggle').setAttribute('aria-expanded','false');}
+$('#sidebarToggle').onclick=()=>{
+  if(matchMedia('(max-width: 900px)').matches)document.body.classList.toggle('sidebar-open');
+  else document.body.classList.toggle('sidebar-collapsed');
+  $('#sidebarToggle').setAttribute('aria-expanded',String(document.body.classList.contains('sidebar-open')));
 };
-fileInput.onchange = () => uploadFiles([...fileInput.files]);
-deleteButton.onclick = async () => {
-  if (!activeChat || !confirm('删除这段对话记录？')) return;
-  await api(`/api/chats/${activeChat}`, { method: 'DELETE' });
-  activeChat = null;
-  messagesEl.innerHTML = '';
-  welcomeEl.hidden = false;
-  deleteButton.hidden = true;
-  await refreshChats();
-};
-
-(async () => { await loadModels(); await refreshChats(); })();
+$('#sidebarBackdrop').onclick=closeSidebar;
+$('#sidebarClose').onclick=closeSidebar;
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
+$('#newChat').onclick=()=>newChat().catch(e=>notify(e.message));
+$('#composer').onsubmit=e=>{e.preventDefault();send(inputEl.value);};
+inputEl.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();send(inputEl.value);}};
+inputEl.oninput=()=>{resizeInput();try{sessionStorage.setItem(draftKey(),inputEl.value);}catch{}clearTimeout(draftTimer);draftTimer=setTimeout(()=>saveDraft().catch(e=>notify('草稿同步失败：'+e.message)),500);};
+inputEl.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();uploadFiles(files);}});
+const composer=$('#composer');composer.ondragover=e=>{e.preventDefault();composer.classList.add('drag-over');};
+composer.ondragleave=()=>composer.classList.remove('drag-over');composer.ondrop=e=>{e.preventDefault();composer.classList.remove('drag-over');uploadFiles([...e.dataTransfer.files]);};
+fileInput.onchange=()=>uploadFiles([...fileInput.files]);
+let searchTimer;$('#chatSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refreshChats().catch(e=>notify(e.message)),200);};
+$('#showArchived').onchange=()=>refreshChats().catch(e=>notify(e.message));
+async function changeChat(patch){if(!activeChat||!guardNavigation())return;await api(`/api/chats/${activeChat}`,{method:'PATCH',body:JSON.stringify(patch)});Object.assign(currentChat,patch);setChatControls();await refreshChats();}
+$('#renameChat').onclick=()=>{const title=prompt('对话名称',currentChat?.title||'');if(title?.trim())changeChat({title:title.trim()}).catch(e=>notify(e.message));};
+$('#pinChat').onclick=()=>changeChat({pinned:!currentChat?.pinned}).catch(e=>notify(e.message));
+$('#archiveChat').onclick=()=>changeChat({archived:!currentChat?.archived}).catch(e=>notify(e.message));
+deleteButton.onclick=async()=>{if(!activeChat||!guardNavigation()||!confirm('删除这段对话？此操作不可撤销。'))return;try{await api(`/api/chats/${activeChat}`,{method:'DELETE'});try{sessionStorage.removeItem(draftKey());}catch{}activeChat=null;currentChat=null;inputEl.value='';await newChat();await refreshChats();}catch(e){notify(e.message);}};
+modelSelect.onchange=async()=>{const previous=selectedModel;selectedModel=selectModelValue(modelSelect.value);try{if(activeChat)await api(`/api/chats/${activeChat}`,{method:'PATCH',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});}catch(e){selectedModel=previous;renderModelOptions();notify(e.message);}};
+if(window.visualViewport){const fit=()=>document.documentElement.style.setProperty('--app-height',`${window.visualViewport.height}px`);visualViewport.addEventListener('resize',fit);fit();}
+(async()=>{try{await loadModels();await refreshChats();await restoreDraft(null);setChatControls();}catch(e){notify(e.message);}})();
