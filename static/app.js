@@ -337,11 +337,12 @@ $('#stopButton').onclick=async()=>{
   try{await api(`/api/chats/${activeChat}/stop`,{method:'POST'});notify('已请求停止生成。');}
   catch(e){notify(e.message);}finally{$('#stopButton').disabled=false;}
 };
-function closeSidebar(){document.body.classList.remove('sidebar-open');$('#sidebarToggle').setAttribute('aria-expanded','false');}
+function syncSidebarAccess(){const mobile=matchMedia('(max-width: 900px)').matches;const open=document.body.classList.contains('sidebar-open');$('#sidebar').inert=mobile&&!open;$('.main').inert=mobile&&open;}
+function closeSidebar(){const open=document.body.classList.contains('sidebar-open');document.body.classList.remove('sidebar-open');$('#sidebarToggle').setAttribute('aria-expanded','false');syncSidebarAccess();if(open)$('#sidebarToggle').focus();}
 $('#sidebarToggle').onclick=()=>{
   if(matchMedia('(max-width: 900px)').matches)document.body.classList.toggle('sidebar-open');
   else document.body.classList.toggle('sidebar-collapsed');
-  $('#sidebarToggle').setAttribute('aria-expanded',String(document.body.classList.contains('sidebar-open')));
+  $('#sidebarToggle').setAttribute('aria-expanded',String(document.body.classList.contains('sidebar-open')));syncSidebarAccess();if(document.body.classList.contains('sidebar-open'))$('#newChat').focus();
 };
 $('#sidebarBackdrop').onclick=closeSidebar;
 $('#sidebarClose').onclick=closeSidebar;
@@ -364,3 +365,5 @@ deleteButton.onclick=async()=>{if(!activeChat||!guardNavigation()||!confirm('删
 modelSelect.onchange=async()=>{const previous=selectedModel;selectedModel=selectModelValue(modelSelect.value);try{if(activeChat)await api(`/api/chats/${activeChat}`,{method:'PATCH',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});}catch(e){selectedModel=previous;renderModelOptions();notify(e.message);}};
 if(window.visualViewport){const fit=()=>document.documentElement.style.setProperty('--app-height',`${window.visualViewport.height}px`);visualViewport.addEventListener('resize',fit);fit();}
 (async()=>{try{await loadModels();await refreshChats();await restoreDraft(null);setChatControls();}catch(e){notify(e.message);}})();
+
+matchMedia('(max-width: 900px)').addEventListener('change',syncSidebarAccess);syncSidebarAccess();

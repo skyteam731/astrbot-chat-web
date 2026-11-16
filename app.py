@@ -613,8 +613,12 @@ def delete_chat(chat_id):
         response = requests.delete(f"{ASTRBOT_URL}/api/v1/chat/sessions/{chat_id}", params={"username": f"mtu_{g.user['id']}"}, headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=15)
         if response.status_code != 404:
             response.raise_for_status()
-            if response.content and response.json().get("status") == "error":
-                return jsonify(error="上游记录删除失败，请重试。"), 502
+            if response.content:
+                result = response.json()
+                if result.get("status") == "error":
+                    if str(result.get("message", "")).lower() == "permission denied":
+                        return jsonify(error="当前 AstrBot 版本不支持清理此账号的会话，记录已保留。请先使用归档。"), 409
+                    return jsonify(error="上游记录删除失败，请重试。"), 502
     except (requests.RequestException, ValueError):
         return jsonify(error="暂时无法删除上游记录，请稍后重试。"), 502
     db().execute("DELETE FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"]))

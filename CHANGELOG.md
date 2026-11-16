@@ -2,6 +2,8 @@
 
 ## v1.3.0
 
+- Rebuild all UI surfaces using the local apple-design and emil-design-eng skills: vertical navigation, unified typography, SVG icons, accessible dialogs and touch layouts.
+- Explain the installed AstrBot session-deletion ownership limitation and retain local records on refusal.
 - Add private project spaces with search, archive, conversation assignment and deletion that preserves conversations.
 - Add editable prompt templates and copyable examples, with preview and explicit draft append/replace actions.
 - Add persistent assistant-answer bookmarks, searchable snapshots, notes and source navigation. Snapshots remain readable after source deletion.

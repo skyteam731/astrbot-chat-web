@@ -316,6 +316,16 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertTrue(all(item.get("id") for item in assistant_rows + user_rows))
         self.assertEqual(self.bob.get(f"/api/chats/{chat_id}/messages").status_code, 404)
 
+    def test_installed_astrbot_owner_refusal_keeps_history_and_explains_archive(self):
+        chat_id = self.seed_chat("owner-refused", 1)
+        upstream = Mock(status_code=200, content=b"response")
+        upstream.json.return_value = {"status": "error", "message": "Permission denied"}
+        with patch.object(appmod.requests, "delete", return_value=upstream):
+            response = self.alice.delete(f"/api/chats/{chat_id}", headers=self.alice_csrf)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("归档", response.json["error"])
+        self.assertEqual(self.alice.get(f"/api/chats/{chat_id}").status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

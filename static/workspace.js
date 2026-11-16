@@ -87,7 +87,7 @@ async function loadProjects() {
 function renderProjects() {
   projectListEl.replaceChildren();
   const shortcuts = document.createElement('div'); shortcuts.className = 'project-shortcuts';
-  for (const [label, value] of [['全部会话','all'],['未分组','none']]) {
+  for (const [label, value] of [['未分组','none']]) {
     const button = document.createElement('button'); button.type = 'button'; button.className = `project-row${projectFilter === value ? ' active' : ''}`;
     button.innerHTML = `<span class="project-glyph">${value === 'all' ? '▤' : '□'}</span><span>${label}</span>`;
     button.onclick = () => selectProjectFilter(value);

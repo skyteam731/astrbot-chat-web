@@ -17,3 +17,6 @@ Private project organization, prompt templates and examples, assistant-answer bo
 
 ## Constraints
 Preserve account isolation. Confirm features against the installed AstrBot schema. Current generation blocks chat switching. Draft persistence covers text; attachments must be re-added after switching conversations.
+
+## Known upstream compatibility limit
+AstrBot 4.29.1 session deletion authenticates the API-key system identity, while website chat sessions use per-user identities. Single and batch deletion refuse those sessions. The website preserves history and reports the refusal; use archive until AstrBot provides a compatible deletion API.

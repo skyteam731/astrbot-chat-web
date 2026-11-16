@@ -1,1 +1,21 @@
-{% extends 'base.html' %}{% block body %}<main class="login-wrap"><section class="login-card"><div class="login-brand"><h1>请输入文本工作室</h1></div><h2>登录</h2>{% for category,message in notices %}<div class="notice {{ category }}">{{ message }}</div>{% endfor %}{% if error %}<div class="error">{{ error }}</div>{% endif %}<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>用户名<input name="username" required autocomplete="username" autofocus></label><label>密码<input name="password" type="password" required autocomplete="current-password"></label><button class="primary full" type="submit">登录</button></form></section></main>{% endblock %}
+{% extends 'base.html' %}
+{% block body %}
+<main class="login-wrap">
+  <section class="login-card" aria-labelledby="loginTitle">
+    <a class="account-brand" href="{{ url_for('login') }}" aria-label="请输入文本工作室">
+      <span class="account-brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M9 6.5h13A2.5 2.5 0 0 1 24.5 9v16H12A3 3 0 0 1 9 22V6.5Z"/><path d="M9 11H7.5A2.5 2.5 0 0 0 5 13.5v10A2.5 2.5 0 0 0 7.5 26H20"/><path d="M13 12h7m-7 4h7"/></svg></span>
+      <span class="account-brand-name">请输入文本工作室</span>
+    </a>
+    <div class="login-intro"><p class="account-eyebrow">工作台</p><h1 id="loginTitle">欢迎回来</h1><p class="account-lead">登录以继续使用你的工作台。</p></div>
+    {% for category,message in notices %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <form class="login-form" method="post" action="{{ url_for('login') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <label>用户名<input name="username" required autocomplete="username" autofocus placeholder="输入用户名"></label>
+      <label>密码<input name="password" type="password" required autocomplete="current-password" placeholder="输入密码"></label>
+      <button class="primary full login-submit" type="submit">登录 <span aria-hidden="true">↗</span></button>
+    </form>
+    <p class="login-footnote">请使用管理员提供的账号登录。</p>
+  </section>
+</main>
+{% endblock %}

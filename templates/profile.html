@@ -1,1 +1,32 @@
-{% extends 'base.html' %}{% block body %}<main class="admin-wrap profile-wrap"><a class="back-link" href="{{ url_for('index') }}">← 返回工作台</a><header class="admin-head"><p class="eyebrow">个人设置</p><h1>个人资料</h1><p class="muted">管理你的显示姓名和登录密码。</p></header>{% for category,message in notices %}<div class="notice {{ category }}">{{ message }}</div>{% endfor %}<section class="admin-card"><h2>显示资料</h2><form class="profile-form" method="post" action="{{ url_for('profile') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">{% if error %}<div class="error">{{ error }}</div>{% endif %}<label>真实姓名<input name="real_name" value="{{ user.real_name }}" placeholder="用于欢迎语" maxlength="40" autocomplete="name"></label><p class="profile-account">登录账号　<b>{{ user.username }}</b></p><button class="primary" type="submit">保存资料</button></form></section><section class="admin-card"><h2>修改登录密码</h2><form class="profile-form" method="post" action="{{ url_for('change_own_password') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>当前密码<input name="current_password" type="password" autocomplete="current-password" required></label><label>新密码<input name="new_password" type="password" minlength="12" autocomplete="new-password" placeholder="至少 12 位" required></label><label>再次输入新密码<input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></label><button class="primary" type="submit">更新密码</button></form></section></main>{% endblock %}
+{% extends 'base.html' %}
+{% block body %}
+<main class="admin-wrap profile-wrap">
+  <header class="account-page-header">
+    <a class="back-link" href="{{ url_for('index') }}"><span aria-hidden="true">←</span> 返回工作台</a>
+    <div class="account-heading"><div><p class="eyebrow">账户</p><h1>个人资料</h1><p class="muted">更新显示信息或更改登录密码。</p></div><div class="profile-avatar" aria-hidden="true">{{ (user.real_name or user.username)[:1]|upper }}</div></div>
+  </header>
+  <div class="account-content">
+    {% for category,message in notices %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <section class="admin-card account-card" aria-labelledby="profileInfoTitle">
+      <div class="account-card-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.4-3.4 2.6-5.2 6.5-5.2s6.1 1.8 6.5 5.2"/></svg></span><div><h2 id="profileInfoTitle">显示资料</h2><p>此姓名会显示在工作台中。</p></div></div>
+      <form class="profile-form account-form" method="post" action="{{ url_for('profile') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <label>真实姓名<input name="real_name" value="{{ user.real_name }}" placeholder="用于欢迎语" maxlength="40" autocomplete="name"></label>
+        <div class="account-identifier"><span>登录账号</span><b>{{ user.username }}</b><small>登录账号由管理员管理。</small></div>
+        <button class="primary" type="submit">保存资料</button>
+      </form>
+    </section>
+    <section class="admin-card account-card" aria-labelledby="passwordTitle">
+      <div class="account-card-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v2"/></svg></span><div><h2 id="passwordTitle">修改登录密码</h2><p>使用至少 12 位的新密码。</p></div></div>
+      <form class="profile-form account-form" method="post" action="{{ url_for('change_own_password') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <label>当前密码<input name="current_password" type="password" autocomplete="current-password" required></label>
+        <label>新密码<input name="new_password" type="password" minlength="12" autocomplete="new-password" placeholder="至少 12 位" required></label>
+        <label>再次输入新密码<input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></label>
+        <button class="primary" type="submit">更新密码</button>
+      </form>
+    </section>
+  </div>
+</main>
+{% endblock %}
