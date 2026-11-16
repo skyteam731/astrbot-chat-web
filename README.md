@@ -8,7 +8,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Workspace
 
-Projects organize each user's conversations. Project descriptions are labels for organization, not shared model context. Templates are editable user-message drafts. Bookmarks keep answer snapshots and notes even when a source conversation is deleted. All resources are scoped to the signed-in account.
+Project space is currently disabled; existing data and conversations are preserved. Administrators maintain public prompt templates through `/admin/templates`; signed-in users can use them or save private copies. Personal templates remain private. Each saved assistant response offers a template picker for follow-up drafts. Bookmarks keep answer snapshots and notes even when a source conversation is deleted. All resources are scoped to the signed-in account.
 
 The app remains Flask + SQLite with browser JavaScript. `workspace.py` registers the workspace APIs. Existing databases migrate automatically at startup; back up the database and code before upgrading.
 

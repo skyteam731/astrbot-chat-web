@@ -3,6 +3,9 @@
 ## Completed in v1.2.0
 Responsive navigation and typography; message/code copying; upstream stop; text drafts; history search, rename, pin and archive; paste/drop upload with progress, cancel and retry; failure recovery.
 
+## v1.3.1 product update
+Project space is disabled by user request; its stored data is preserved. Public templates are managed by administrators and available to every signed-in user. Each saved assistant response offers a template picker for follow-up drafts.
+
 ## Completed in v1.3.0
 Private project organization, prompt templates and examples, assistant-answer bookmarks with searchable snapshots, notes and source navigation.
 

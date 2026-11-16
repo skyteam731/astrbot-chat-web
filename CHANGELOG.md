@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.1
+
+- Disable project space and remove all project controls while preserving existing data and conversations.
+- Add administrator-managed public prompt templates alongside private templates.
+- Add a template picker below each saved assistant response for follow-up messages.
+
+
 ## v1.3.0
 
 - Rebuild all UI surfaces using the local apple-design and emil-design-eng skills: vertical navigation, unified typography, SVG icons, accessible dialogs and touch layouts.

@@ -8,6 +8,7 @@
   <div class="account-content admin-content">
     {% for category,message in notices %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}
     {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <a class="admin-template-link" href="/admin/templates"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.5 4.5h8l4 4v11h-12z"/><path d="M14.5 4.5v4h4m-8 4h5m-5 3h5"/></svg></span><span><b>公共提示模板</b><small>管理所有账号都可使用的起草模板</small></span><span class="admin-template-arrow" aria-hidden="true">↗</span></a>
     <section class="admin-card account-card" aria-labelledby="createAccountTitle">
       <div class="account-card-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.3-3 2.2-4.6 5.5-4.6 2 0 3.5.6 4.4 1.8M18 8v7m-3.5-3.5h7"/></svg></span><div><h2 id="createAccountTitle">新建账号</h2><p>设置登录名、显示姓名和初始权限。</p></div></div>
       <form class="create-user account-form" method="post" action="{{ url_for('add_user') }}">

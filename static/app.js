@@ -146,7 +146,6 @@ async function loadModels() {
 const $ = selector => document.querySelector(selector);
 const viewport = $('#conversation');
 let currentChat = null, followLatest = true, loading = false, listRevision = 0;
-let projectFilter = 'all';
 let uploading = 0, draftTimer, draftChain = Promise.resolve();
 const draftKey = () => `studio-draft:${$('.shell').dataset.userId}:${activeChat || 'new'}`;
 let noticeTimer;
@@ -215,15 +214,14 @@ function codeButtons(target) {
 }
 function setChatControls() {
   $('.page-title').textContent = currentChat?.title || '新对话';
-  for (const id of ['deleteChat','renameChat','pinChat','archiveChat','moveChat']) $('#'+id).hidden = !activeChat;
+  for (const id of ['deleteChat','renameChat','pinChat','archiveChat']) $('#'+id).hidden = !activeChat;
   $('#pinChat').textContent = currentChat?.pinned ? '取消置顶' : '置顶对话';
   $('#archiveChat').textContent = currentChat?.archived ? '移出归档' : '归档对话';
-  window.syncProjectControls?.();
 }
 async function refreshChats() {
   const revision = ++listRevision;
   const archived = $('#showArchived').checked ? 1 : 0;
-  const chats = await api(`/api/chats?q=${encodeURIComponent($('#chatSearch').value)}&archived=${archived}&project=${encodeURIComponent(projectFilter)}`);
+  const chats = await api(`/api/chats?q=${encodeURIComponent($('#chatSearch').value)}&archived=${archived}`);
   if (revision !== listRevision) return;
   const updated=chats.find(c=>c.id===activeChat); if(updated){currentChat=updated;setChatControls();}
   listEl.replaceChildren();
@@ -235,8 +233,7 @@ async function refreshChats() {
     if(group !== lastGroup) { const label=document.createElement('div'); label.className='side-label'; label.textContent=group; listEl.append(label); lastGroup=group; }
     const button = action('', () => openChat(chat)); button.className=`chat-item chat-row${activeChat===chat.id?' active':''}`;
     const title = document.createElement('span'); title.className='chat-title'; title.textContent=chat.title;
-    const meta = document.createElement('span'); meta.className='chat-meta'; meta.textContent=chat.project_name || '未分组';
-    button.append(title,meta); button.title=chat.title; listEl.append(button);
+    button.append(title); button.title=chat.title; listEl.append(button);
   }
 }
 function guardNavigation() { if (busy || uploading || loading) { notify('请先停止当前回复或等待上传完成。'); return false; } return true; }
@@ -298,11 +295,11 @@ async function uploadFiles(files) {
 }
 async function send(text) {
   text=text.trim(); if((!text&&!pendingFiles.length)||busy||uploading||loading)return;
-  busy=true; notify(''); modelSelect.disabled=true; $('#sendButton').disabled=true; $('#stopButton').hidden=false;
+  busy=true;for(const button of messagesEl.querySelectorAll('.bookmark-action,.template-followup'))button.disabled=true; notify(''); modelSelect.disabled=true; $('#sendButton').disabled=true; $('#stopButton').hidden=false;
   const attachments=[...pendingFiles]; let target=null, complete=false;
   try {
     if(!activeChat){
-      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model,project_id:projectFilter==='all'||projectFilter==='none'?null:projectFilter})});
+      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});
       activeChat=chat.id;currentChat=chat;setChatControls();try{sessionStorage.removeItem(`studio-draft:${$('.shell').dataset.userId}:new`);}catch{}
     }
     await saveDraft(); pendingFiles=[];renderPendingFiles();inputEl.value='';resizeInput();await saveDraft();welcomeEl.hidden=true;

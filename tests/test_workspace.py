@@ -45,16 +45,20 @@ class WorkspaceApiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="studio-workspace-case-")
         appmod.DB_PATH = os.path.join(self.tmp.name, "db.sqlite3")
+        # Keep the disabled project feature's legacy endpoint tests active by default.
+        appmod.app.config["PROJECTS_ENABLED"] = True
         appmod.init_db()
         # Migration execution must be safe and idempotent on an initialized DB.
         appmod.init_db()
         with sqlite3.connect(appmod.DB_PATH) as conn:
             conn.executemany(
                 "INSERT INTO users(id,username,password_hash,is_active,session_version,created_at) VALUES(?,?,?,?,?,?)",
-                [(1, "alice", "unused", 1, 1, "2026-01-01"), (2, "bob", "unused", 1, 1, "2026-01-01")],
+                [(1, "alice", "unused", 1, 1, "2026-01-01"), (2, "bob", "unused", 1, 1, "2026-01-01"), (3, "admin", "unused", 1, 1, "2026-01-01")],
             )
+            conn.execute("UPDATE users SET is_admin=1 WHERE id=3")
         self.alice, self.alice_csrf = self.client(1)
         self.bob, self.bob_csrf = self.client(2)
+        self.admin, self.admin_csrf = self.client(3)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -72,7 +76,8 @@ class WorkspaceApiTests(unittest.TestCase):
         return getattr(client, method)(path, json=payload, headers=headers or {})
 
     def create_project(self, client=None, headers=None, name="Project", description="Workspace"):
-        client, headers = client or (self.alice, self.alice_csrf)
+        if client is None:
+            client, headers = self.alice, self.alice_csrf
         response = self.call_json(client, "post", "/api/projects", {"name": name, "description": description}, headers)
         self.assertIn(response.status_code, (200, 201), response.get_data(as_text=True))
         project_id = resource_id(response.json, "project")
@@ -80,7 +85,8 @@ class WorkspaceApiTests(unittest.TestCase):
         return project_id
 
     def create_template(self, client=None, headers=None, name="Explain", content="Explain step by step"):
-        client, headers = client or (self.alice, self.alice_csrf)
+        if client is None:
+            client, headers = self.alice, self.alice_csrf
         response = self.call_json(client, "post", "/api/templates", {"name": name, "content": content}, headers)
         self.assertIn(response.status_code, (200, 201), response.get_data(as_text=True))
         template_id = resource_id(response.json, "template")
@@ -202,6 +208,69 @@ class WorkspaceApiTests(unittest.TestCase):
         listing = self.alice.get("/api/projects")
         self.assertEqual(listing.status_code, 200)
         self.assertEqual(rows_or_wrapped(listing.json, "projects"), [])
+
+    def test_disabled_projects_api_and_chat_assignment_return_410_without_deleting_data(self):
+        project_id = self.create_project()
+        chat_id = self.seed_chat("kept-chat", 1, "Kept conversation", project_id)
+        self.app_projects_enabled = appmod.app.config["PROJECTS_ENABLED"]
+        appmod.app.config["PROJECTS_ENABLED"] = False
+        try:
+            self.assertEqual(self.alice.get("/api/projects").status_code, 410)
+            self.assertEqual(self.call_json(self.alice, "post", "/api/projects", {"name": "New"}, self.alice_csrf).status_code, 410)
+            self.assertEqual(self.alice.get(f"/api/projects/{project_id}").status_code, 410)
+            self.assertEqual(self.call_json(self.alice, "patch", f"/api/projects/{project_id}", {"name": "Changed"}, self.alice_csrf).status_code, 410)
+            self.assertEqual(self.alice.delete(f"/api/projects/{project_id}", headers=self.alice_csrf).status_code, 410)
+            self.assertEqual(self.call_json(self.alice, "patch", f"/api/chats/{chat_id}", {"project_id": project_id}, self.alice_csrf).status_code, 410)
+
+            detail = self.alice.get(f"/api/chats/{chat_id}")
+            self.assertEqual(detail.status_code, 200, detail.get_data(as_text=True))
+            self.assertEqual(detail.json.get("project_id"), project_id)
+            history = rows_or_wrapped(self.alice.get("/api/chats").json, "chats")
+            self.assertTrue(any(row.get("id") == chat_id for row in history))
+            with sqlite3.connect(appmod.DB_PATH) as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects WHERE id=? AND user_id=1", (project_id,)).fetchone()[0], 1)
+                self.assertEqual(conn.execute("SELECT project_id FROM chats WHERE id=?", (chat_id,)).fetchone()[0], project_id)
+        finally:
+            appmod.app.config["PROJECTS_ENABLED"] = self.app_projects_enabled
+
+    def test_public_templates_admin_crud_readonly_access_validation_and_migration(self):
+        self.assertEqual(self.admin.get("/admin/templates").status_code, 200)
+        self.assertEqual(self.alice.get("/admin/templates").status_code, 403)
+
+        created = self.call_json(self.admin, "post", "/api/admin/public-templates", {"name": "Public helper", "content": "Use concise language"}, self.admin_csrf)
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        template_id = created.json.get("id")
+        self.assertTrue(template_id, created.json)
+        for client in (self.alice, self.bob):
+            public_list = client.get("/api/public-templates")
+            self.assertEqual(public_list.status_code, 200)
+            self.assertTrue(any(item.get("id") == template_id for item in rows_or_wrapped(public_list.json, "templates")))
+        self.assertTrue(any(item.get("id") == template_id for item in rows_or_wrapped(self.alice.get("/api/public-templates?q=concise%20language").json, "templates")))
+
+        for client, csrf in ((self.alice, self.alice_csrf), (self.bob, self.bob_csrf)):
+            self.assertEqual(self.call_json(client, "patch", f"/api/admin/public-templates/{template_id}", {"name": "Hijack"}, csrf).status_code, 403)
+            self.assertEqual(client.delete(f"/api/admin/public-templates/{template_id}", headers=csrf).status_code, 403)
+        self.assertEqual(self.call_json(self.admin, "post", "/api/admin/public-templates", {"name": "No CSRF", "content": "x"}).status_code, 400)
+        self.assertEqual(self.call_json(self.admin, "post", "/api/admin/public-templates", ["not", "object"], self.admin_csrf).status_code, 400)
+        for payload in (
+            {"name": "  ", "content": "valid"},
+            {"name": "N" * 81, "content": "valid"},
+            {"name": "valid", "content": ""},
+            {"name": "valid", "content": "x" * 20001},
+        ):
+            self.assertIn(self.call_json(self.admin, "post", "/api/admin/public-templates", payload, self.admin_csrf).status_code, (400, 422))
+        self.assertIn(self.call_json(self.admin, "patch", f"/api/admin/public-templates/{template_id}", {"content": "y" * 20001}, self.admin_csrf).status_code, (400, 422))
+
+        edited = self.call_json(self.admin, "patch", f"/api/admin/public-templates/{template_id}", {"name": "Edited public", "content": "Replacement"}, self.admin_csrf)
+        self.assertEqual(edited.status_code, 200, edited.get_data(as_text=True))
+        appmod.init_db()
+        public_after_migration = self.alice.get("/api/public-templates")
+        self.assertTrue(any(item.get("id") == template_id and item.get("content") == "Replacement" for item in rows_or_wrapped(public_after_migration.json, "templates")))
+
+        private_id = self.create_template(self.alice, self.alice_csrf, name="Private only", content="Private body")
+        alice_public_ids = {item.get("id") for item in rows_or_wrapped(self.alice.get("/api/public-templates").json, "templates")}
+        self.assertNotIn(private_id, alice_public_ids)
+        self.assertIn(self.admin.delete(f"/api/admin/public-templates/{template_id}", headers=self.admin_csrf).status_code, (200, 204))
 
     def test_chat_project_filters_and_foreign_chat_detail_and_project_assignment(self):
         project_id = self.create_project()

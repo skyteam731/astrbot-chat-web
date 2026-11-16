@@ -18,6 +18,7 @@ ASTRBOT_API_KEY = os.environ.get("ASTRBOT_API_KEY", "")
 APP_SECRET = os.environ.get("APP_SECRET", "")
 BOOTSTRAP_PASSWORD = os.environ.get("BOOTSTRAP_PASSWORD", "")
 app = Flask(__name__)
+app.config["PROJECTS_ENABLED"] = False
 app.secret_key = APP_SECRET or secrets.token_hex(32)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=True, PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 7)
@@ -87,6 +88,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS prompt_templates (
             id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS public_prompt_templates (
+            id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TEXT NOT NULL,
@@ -631,6 +639,12 @@ def delete_chat(chat_id):
 def admin():
     rows = db().execute("SELECT id,username,real_name,is_admin,is_active,created_at FROM users ORDER BY id").fetchall()
     return render_template("admin.html", users=rows, user=g.user, error=None, notices=get_flashed_messages(with_categories=True))
+
+
+@app.get("/admin/templates")
+@admin_required
+def public_template_admin():
+    return render_template("public_templates.html", user=g.user, notices=[])
 
 
 @app.post("/admin/users")

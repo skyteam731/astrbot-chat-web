@@ -11,7 +11,15 @@ def register_workspace(app, db, login_required, now):
             return jsonify(error=error.description), error.code
         return error
 
+    @app.before_request
+    def disabled_project_routes():
+        if not app.config.get('PROJECTS_ENABLED', False) and (request.path == '/api/projects' or request.path.startswith('/api/projects/')):
+            if g.user and g.user['is_active']:
+                return jsonify(error='项目空间已停用。'), 410
+
     def owned_project(project_id):
+        if not app.config.get('PROJECTS_ENABLED', False):
+            abort(410, description='项目空间已停用。')
         if not isinstance(project_id, str) or not db().execute(
             "SELECT id FROM projects WHERE id=? AND user_id=?", (project_id, g.user['id'])
         ).fetchone():
@@ -138,6 +146,43 @@ def register_workspace(app, db, login_required, now):
             db().commit()
             row = owned('prompt_templates', ident)
         return jsonify(dict(row))
+
+    @app.get('/api/public-templates')
+    @login_required
+    def public_templates_list():
+        sql, params = search('SELECT * FROM public_prompt_templates WHERE 1=1', [], ['name', 'content'])
+        return jsonify([dict(row) for row in db().execute(sql + ' ORDER BY updated_at DESC,id', params)])
+
+    @app.post('/api/admin/public-templates')
+    @login_required
+    def public_templates_create():
+        if not g.user['is_admin']:
+            abort(403)
+        data = body()
+        name, content = text(data, 'name', 80, True), text(data, 'content', 20000, True)
+        ident, stamp = str(uuid.uuid4()), now()
+        db().execute('INSERT INTO public_prompt_templates(id,name,content,created_at,updated_at) VALUES(?,?,?,?,?)', (ident, name, content, stamp, stamp))
+        db().commit()
+        return jsonify(dict(db().execute('SELECT * FROM public_prompt_templates WHERE id=?', (ident,)).fetchone())), 201
+
+    @app.route('/api/admin/public-templates/<ident>', methods=['PATCH', 'DELETE'])
+    @login_required
+    def public_templates_item(ident):
+        if not g.user['is_admin']:
+            abort(403)
+        row = db().execute('SELECT * FROM public_prompt_templates WHERE id=?', (ident,)).fetchone()
+        if row is None:
+            abort(404)
+        if request.method == 'DELETE':
+            db().execute('DELETE FROM public_prompt_templates WHERE id=?', (ident,))
+            db().commit()
+            return '', 204
+        data = body()
+        name = text(data, 'name', 80, True) if 'name' in data else row['name']
+        content = text(data, 'content', 20000, True) if 'content' in data else row['content']
+        db().execute('UPDATE public_prompt_templates SET name=?,content=?,updated_at=? WHERE id=?', (name, content, now(), ident))
+        db().commit()
+        return jsonify(dict(db().execute('SELECT * FROM public_prompt_templates WHERE id=?', (ident,)).fetchone()))
 
     def bookmark(ident):
         row = db().execute('SELECT b.*, CASE WHEN c.id IS NOT NULL THEN c.title ELSE b.source_title END AS current_title,c.id IS NOT NULL AS source_available FROM bookmarks b LEFT JOIN chats c ON c.id=b.source_chat_id AND c.user_id=b.user_id WHERE b.id=? AND b.user_id=?', (ident, g.user['id'])).fetchone()
