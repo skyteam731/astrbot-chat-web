@@ -1,1 +1,61 @@
-{% extends 'base.html' %}{% block body %}<main class="admin-wrap"><a class="back-link" href="{{ url_for('index') }}">← 返回工作台</a><header class="admin-head"><p class="eyebrow">账户设置</p><h1>账号管理</h1><p class="muted">编辑账号资料、启用状态和管理员权限。</p></header>{% for category,message in notices %}<div class="notice {{ category }}">{{ message }}</div>{% endfor %}{% if error %}<div class="error">{{ error }}</div>{% endif %}<section class="admin-card"><h2>新建账号</h2><form class="create-user" method="post" action="{{ url_for('add_user') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>登录名<input name="username" placeholder="例如 alice" required pattern="[A-Za-z0-9_.-]{3,32}"></label><label>真实姓名<input name="real_name" placeholder="用于欢迎语" maxlength="40"></label><label>初始密码<input name="password" type="password" placeholder="至少 12 位" minlength="12" required></label><label class="check-control"><input type="checkbox" name="is_admin" value="1"><span>管理员</span></label><button class="primary" type="submit">创建账号</button></form></section><section class="admin-card"><h2>账号列表 <span class="count">{{ users|length }}</span></h2><div class="user-table">{% for item in users %}<article class="user-record"><div class="user-line"><div class="avatar">{{ (item.real_name or item.username)[:1]|upper }}</div><div class="user-name"><b>{{ item.real_name or item.username }}{% if item.is_admin %}<span class="badge">管理员</span>{% endif %}</b><small>@{{ item.username }} · {% if item.is_active %}可登录{% else %}已停用{% endif %}</small></div><details class="user-actions"><summary>管理</summary><div class="account-tools"><form class="account-edit" method="post" action="{{ url_for('update_user', user_id=item.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><b>账号资料</b><label>登录名<input name="username" value="{{ item.username }}" required pattern="[A-Za-z0-9_.-]{3,32}"></label><label>真实姓名<input name="real_name" value="{{ item.real_name }}" maxlength="40"></label><label class="check-control"><input type="checkbox" name="is_admin" value="1" {% if item.is_admin %}checked{% endif %}><span>管理员权限</span></label><label class="check-control"><input type="checkbox" name="is_active" value="1" {% if item.is_active %}checked{% endif %}><span>允许登录</span></label><button class="primary" type="submit">保存账号信息</button></form><form class="account-reset" method="post" action="{{ url_for('reset_user_password', user_id=item.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><b>重设密码</b><p>密码无法查看；设置新密码后，旧登录会话会失效。</p><label>新密码<input name="password" type="password" minlength="12" placeholder="至少 12 位" required></label><label>再次输入<input name="confirm_password" type="password" minlength="12" placeholder="确认新密码" required></label><button class="secondary" type="submit">重设密码</button></form></div></details></div></article>{% endfor %}</div></section><section class="admin-card"><h2>修改管理员密码</h2><form class="password-form" method="post" action="{{ url_for('change_password') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><label>新密码<input name="password" type="password" placeholder="至少 12 位" minlength="12" required></label><button class="secondary" type="submit">更新密码</button></form></section></main>{% endblock %}
+{% extends 'base.html' %}
+{% block body %}
+<main class="admin-wrap">
+  <header class="account-page-header">
+    <a class="back-link" href="{{ url_for('index') }}"><span aria-hidden="true">←</span> 返回工作台</a>
+    <div class="account-heading"><div><p class="eyebrow">工作台设置</p><h1>账号管理</h1><p class="muted">创建账号并管理访问权限。</p></div><div class="admin-summary"><span>账号</span><b>{{ users|length }}</b></div></div>
+  </header>
+  <div class="account-content admin-content">
+    {% for category,message in notices %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}
+    {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+    <a class="admin-template-link" href="/admin/templates"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.5 4.5h8l4 4v11h-12z"/><path d="M14.5 4.5v4h4m-8 4h5m-5 3h5"/></svg></span><span><b>公共提示模板</b><small>管理所有账号都可使用的起草模板</small></span><span class="admin-template-arrow" aria-hidden="true">↗</span></a>
+    <section class="admin-card account-card" aria-labelledby="createAccountTitle">
+      <div class="account-card-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.3-3 2.2-4.6 5.5-4.6 2 0 3.5.6 4.4 1.8M18 8v7m-3.5-3.5h7"/></svg></span><div><h2 id="createAccountTitle">新建账号</h2><p>设置登录名、显示姓名和初始权限。</p></div></div>
+      <form class="create-user account-form" method="post" action="{{ url_for('add_user') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <label>登录名<input name="username" placeholder="例如 alice" required pattern="[A-Za-z0-9_.-]{3,32}" autocomplete="off"></label>
+        <label>真实姓名<input name="real_name" placeholder="用于欢迎语" maxlength="40" autocomplete="off"></label>
+        <label>初始密码<input name="password" type="password" placeholder="至少 12 位" minlength="12" required autocomplete="new-password"></label>
+        <label class="check-control"><input type="checkbox" name="is_admin" value="1"><span>管理员权限</span></label>
+        <button class="primary" type="submit">创建账号</button>
+      </form>
+    </section>
+    <section class="admin-card account-card" aria-labelledby="accountListTitle">
+      <div class="account-card-heading account-list-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.3-3 2.2-4.6 5.5-4.6s5.2 1.6 5.5 4.6M17 8h4m-4 4h4m-4 4h4"/></svg></span><div><h2 id="accountListTitle">账号列表 <span class="count">{{ users|length }}</span></h2><p>管理员权限与登录状态可在每个账号的管理面板中更改。</p></div></div>
+      <div class="user-table">{% for item in users %}
+        <article class="user-record">
+          <div class="user-line">
+            <div class="avatar">{{ (item.real_name or item.username)[:1]|upper }}</div>
+            <div class="user-name"><b>{{ item.real_name or item.username }}{% if item.is_admin %}<span class="badge">管理员</span>{% endif %}</b><small>@{{ item.username }} <span class="status-dot {% if not item.is_active %}inactive{% endif %}"></span>{% if item.is_active %}可登录{% else %}已停用{% endif %}</small></div>
+            <details class="user-actions"><summary><span>管理账号</span><span class="details-chevron" aria-hidden="true">⌄</span></summary>
+              <div class="account-tools">
+                <form class="account-edit" method="post" action="{{ url_for('update_user', user_id=item.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="form-title"><b>账号信息</b><small>更新登录名、显示姓名和访问权限。</small></div>
+                  <label>登录名<input name="username" value="{{ item.username }}" required pattern="[A-Za-z0-9_.-]{3,32}" autocomplete="off"></label>
+                  <label>真实姓名<input name="real_name" value="{{ item.real_name }}" maxlength="40" autocomplete="off"></label>
+                  <div class="check-stack"><label class="check-control"><input type="checkbox" name="is_admin" value="1" {% if item.is_admin %}checked{% endif %}><span>管理员权限</span></label><label class="check-control"><input type="checkbox" name="is_active" value="1" {% if item.is_active %}checked{% endif %}><span>允许登录</span></label></div>
+                  <button class="primary" type="submit">保存账号信息</button>
+                </form>
+                <form class="account-reset" method="post" action="{{ url_for('reset_user_password', user_id=item.id) }}">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="form-title"><b>重设密码</b><small>设置后，旧登录会话将失效。</small></div>
+                  <label>新密码<input name="password" type="password" minlength="12" placeholder="至少 12 位" required autocomplete="new-password"></label>
+                  <label>再次输入<input name="confirm_password" type="password" minlength="12" placeholder="确认新密码" required autocomplete="new-password"></label>
+                  <button class="secondary" type="submit">重设密码</button>
+                </form>
+              </div>
+            </details>
+          </div>
+        </article>
+      {% endfor %}</div>
+    </section>
+    <section class="admin-card account-card" aria-labelledby="adminPasswordTitle">
+      <div class="account-card-heading"><span class="section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span><div><h2 id="adminPasswordTitle">修改管理员密码</h2><p>更改当前管理员的登录密码。</p></div></div>
+      <form class="password-form account-form" method="post" action="{{ url_for('change_password') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <label>新密码<input name="password" type="password" placeholder="至少 12 位" minlength="12" required autocomplete="new-password"></label>
+        <button class="secondary" type="submit">更新密码</button>
+      </form>
+    </section>
+  </div>
+</main>
+{% endblock %}

@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.3.1
+
+- Disable project space and remove all project controls while preserving existing data and conversations.
+- Add administrator-managed public prompt templates alongside private templates.
+- Add a template picker below each saved assistant response for follow-up messages.
+
+
+## v1.3.0
+
+- Rebuild all UI surfaces using the local apple-design and emil-design-eng skills: vertical navigation, unified typography, SVG icons, accessible dialogs and touch layouts.
+- Explain the installed AstrBot session-deletion ownership limitation and retain local records on refusal.
+- Add private project spaces with search, archive, conversation assignment and deletion that preserves conversations.
+- Add editable prompt templates and copyable examples, with preview and explicit draft append/replace actions.
+- Add persistent assistant-answer bookmarks, searchable snapshots, notes and source navigation. Snapshots remain readable after source deletion.
+- Return stable message IDs and persisted assistant IDs in the stream completion event.
+- Preserve user ownership and CSRF checks on every workspace resource, with idempotent database migrations.
+- Consolidate glass appearance and drawer rules while retaining the mobile fixed-position fix.
+
+
 ## v1.2.2
 
 - Set the login card, history sidebar and chat window to liquid glass surfaces with approximately 75% opacity.

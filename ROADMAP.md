@@ -3,8 +3,13 @@
 ## Completed in v1.2.0
 Responsive navigation and typography; message/code copying; upstream stop; text drafts; history search, rename, pin and archive; paste/drop upload with progress, cancel and retry; failure recovery.
 
+## v1.3.1 product update
+Project space is disabled by user request; its stored data is preserved. Public templates are managed by administrators and available to every signed-in user. Each saved assistant response offers a template picker for follow-up drafts.
+
+## Completed in v1.3.0
+Private project organization, prompt templates and examples, assistant-answer bookmarks with searchable snapshots, notes and source navigation.
+
 ## Pending user selection
-- Projects, prompt templates and saved notes.
 - Message editing, regeneration versions and quoted follow-up questions.
 - Model favorites, capabilities and per-response model metadata.
 - Background generation recovery and concurrent conversations.
@@ -15,3 +20,6 @@ Responsive navigation and typography; message/code copying; upstream stop; text 
 
 ## Constraints
 Preserve account isolation. Confirm features against the installed AstrBot schema. Current generation blocks chat switching. Draft persistence covers text; attachments must be re-added after switching conversations.
+
+## Known upstream compatibility limit
+AstrBot 4.29.1 session deletion authenticates the API-key system identity, while website chat sessions use per-user identities. Single and batch deletion refuse those sessions. The website preserves history and reports the refusal; use archive until AstrBot provides a compatible deletion API.
