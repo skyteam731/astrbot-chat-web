@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3.0
+
+- Add private project spaces with search, archive, conversation assignment and deletion that preserves conversations.
+- Add editable prompt templates and copyable examples, with preview and explicit draft append/replace actions.
+- Add persistent assistant-answer bookmarks, searchable snapshots, notes and source navigation. Snapshots remain readable after source deletion.
+- Return stable message IDs and persisted assistant IDs in the stream completion event.
+- Preserve user ownership and CSRF checks on every workspace resource, with idempotent database migrations.
+- Consolidate glass appearance and drawer rules while retaining the mobile fixed-position fix.
+
+
 ## v1.2.2
 
 - Set the login card, history sidebar and chat window to liquid glass surfaces with approximately 75% opacity.

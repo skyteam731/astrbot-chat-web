@@ -3,8 +3,10 @@
 ## Completed in v1.2.0
 Responsive navigation and typography; message/code copying; upstream stop; text drafts; history search, rename, pin and archive; paste/drop upload with progress, cancel and retry; failure recovery.
 
+## Completed in v1.3.0
+Private project organization, prompt templates and examples, assistant-answer bookmarks with searchable snapshots, notes and source navigation.
+
 ## Pending user selection
-- Projects, prompt templates and saved notes.
 - Message editing, regeneration versions and quoted follow-up questions.
 - Model favorites, capabilities and per-response model metadata.
 - Background generation recovery and concurrent conversations.

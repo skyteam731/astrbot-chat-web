@@ -75,6 +75,35 @@ def init_db():
             attachments_json TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS prompt_templates (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            message_id INTEGER NOT NULL,
+            source_chat_id TEXT NOT NULL,
+            source_title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id,message_id)
+        );
         CREATE TABLE IF NOT EXISTS attachments (
             attachment_id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -87,7 +116,7 @@ def init_db():
     conn.execute("BEGIN IMMEDIATE")
     migrations = {
         "users": {"real_name": "TEXT NOT NULL DEFAULT ''", "session_version": "INTEGER NOT NULL DEFAULT 1"},
-        "chats": {"selected_provider": "TEXT NOT NULL DEFAULT ''", "selected_model": "TEXT NOT NULL DEFAULT ''", "pinned": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "draft": "TEXT NOT NULL DEFAULT ''"},
+        "chats": {"selected_provider": "TEXT NOT NULL DEFAULT ''", "selected_model": "TEXT NOT NULL DEFAULT ''", "pinned": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "draft": "TEXT NOT NULL DEFAULT ''", "project_id": "TEXT REFERENCES projects(id) ON DELETE SET NULL"},
         "messages": {"attachments_json": "TEXT NOT NULL DEFAULT '[]'"},
     }
     for table, columns in migrations.items():
@@ -95,6 +124,9 @@ def init_db():
         for column, definition in columns.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chats_user_project ON chats(user_id,project_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id,archived)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_templates_user ON prompt_templates(user_id)")
     count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if count == 0 and BOOTSTRAP_PASSWORD:
         conn.execute("INSERT OR IGNORE INTO users(username,password_hash,is_admin,created_at) VALUES(?,?,1,?)", ("admin", generate_password_hash(BOOTSTRAP_PASSWORD, method="scrypt"), datetime.now(timezone.utc).isoformat()))
@@ -248,8 +280,15 @@ def list_chats():
     query = request.args.get("q", "").strip()
     if not isinstance(query, str):
         return jsonify(error="q 参数必须为字符串。"), 400
-    sql = "SELECT c.id,c.title,c.selected_provider,c.selected_model,c.pinned,c.archived,c.updated_at FROM chats c WHERE c.user_id=? AND c.archived=?"
+    sql = "SELECT c.id,c.title,c.selected_provider,c.selected_model,c.pinned,c.archived,c.updated_at,c.project_id,p.name AS project_name FROM chats c LEFT JOIN projects p ON p.id=c.project_id AND p.user_id=c.user_id WHERE c.user_id=? AND c.archived=?"
     params = [g.user["id"], int(archived)]
+    project = request.args.get("project", "all")
+    if project == "none":
+        sql += " AND c.project_id IS NULL"
+    elif project != "all":
+        owned_project(project)
+        sql += " AND c.project_id=?"
+        params.append(project)
     if query:
         sql += " AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id=c.id AND m.content LIKE ? ESCAPE '\\'))"
         escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -265,7 +304,12 @@ def list_chats():
 def create_chat():
     chat_id = str(uuid.uuid4())
     stamp = now()
-    body = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="请求内容必须是 JSON 对象。"), 400
+    project_id = body.get("project_id")
+    if project_id is not None:
+        owned_project(project_id)
     provider = str(body.get("selected_provider", ""))[:200]
     model = str(body.get("selected_model", ""))[:200]
     if provider or model:
@@ -275,9 +319,9 @@ def create_chat():
             return jsonify(error="暂时无法读取可用模型。"), 502
         if not valid:
             return jsonify(error="所选模型当前不可用。"), 400
-    db().execute("INSERT INTO chats(id,user_id,title,selected_provider,selected_model,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (chat_id, g.user["id"], "新对话", provider, model, stamp, stamp))
+    db().execute("INSERT INTO chats(id,user_id,title,selected_provider,selected_model,created_at,updated_at,project_id) VALUES(?,?,?,?,?,?,?,?)", (chat_id, g.user["id"], "新对话", provider, model, stamp, stamp, project_id))
     db().commit()
-    return jsonify(id=chat_id, title="新对话", selected_provider=provider, selected_model=model)
+    return jsonify(id=chat_id, title="新对话", selected_provider=provider, selected_model=model, project_id=project_id)
 
 
 def provider_records():
@@ -319,6 +363,11 @@ def update_chat(chat_id):
         abort(404)
 
     updates = {}
+    if "project_id" in body:
+        project_id = body["project_id"]
+        if project_id is not None:
+            owned_project(project_id)
+        updates["project_id"] = project_id
     if "title" in body:
         title = body["title"]
         if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120:
@@ -382,7 +431,7 @@ def list_messages(chat_id):
     owner = db().execute("SELECT id FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone()
     if not owner:
         abort(404)
-    rows = db().execute("SELECT role,content,attachments_json,created_at FROM messages WHERE chat_id=? ORDER BY id", (chat_id,)).fetchall()
+    rows = db().execute("SELECT m.id,m.role,m.content,m.attachments_json,m.created_at,b.id AS bookmark_id FROM messages m LEFT JOIN bookmarks b ON b.message_id=m.id AND b.user_id=? WHERE m.chat_id=? ORDER BY m.id", (g.user["id"], chat_id)).fetchall()
     result = []
     for row in rows:
         item = dict(row)
@@ -527,13 +576,14 @@ def send_message(chat_id):
             yield "data: " + json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n\n"
             collected = []
         answer = "".join(collected)
+        assistant_message_id = None
         with db_lock:
             with sqlite3.connect(DB_PATH, timeout=30) as conn:
                 if answer:
-                    conn.execute("INSERT INTO messages(chat_id,role,content,created_at) VALUES(?,?,?,?)", (chat_id, "assistant", answer, now()))
+                    assistant_message_id = conn.execute("INSERT INTO messages(chat_id,role,content,created_at) VALUES(?,?,?,?)", (chat_id, "assistant", answer, now())).lastrowid
                 conn.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
                 conn.commit()
-        yield "data: " + json.dumps({"done": True, "user_message_id": user_message_id}, ensure_ascii=False) + "\n\n"
+        yield "data: " + json.dumps({"done": True, "user_message_id": user_message_id, "assistant_message_id": assistant_message_id}, ensure_ascii=False) + "\n\n"
 
     return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -675,6 +725,9 @@ def change_password():
 def healthz():
     return jsonify(ok=True)
 
+
+from workspace import register_workspace
+owned_project = register_workspace(app, db, login_required, now)
 
 init_db()
 

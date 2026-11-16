@@ -146,9 +146,11 @@ async function loadModels() {
 const $ = selector => document.querySelector(selector);
 const viewport = $('#conversation');
 let currentChat = null, followLatest = true, loading = false, listRevision = 0;
+let projectFilter = 'all';
 let uploading = 0, draftTimer, draftChain = Promise.resolve();
 const draftKey = () => `studio-draft:${$('.shell').dataset.userId}:${activeChat || 'new'}`;
-function notify(message) { $('#notice').textContent = message; $('#notice').hidden = !message; }
+let noticeTimer;
+function notify(message) { clearTimeout(noticeTimer);$('#notice').textContent=message;$('#notice').hidden=!message;if(message)noticeTimer=setTimeout(()=>{$('#notice').hidden=true;},6000); }
 function action(label, callback) {
   const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
   button.onclick = () => Promise.resolve().then(callback).catch(error => notify(error.message)); return button;
@@ -193,14 +195,16 @@ function renderAttachments(container, attachments = []) {
   }
   if (attachments.length) container.append(box);
 }
-function renderMessage(role, content, attachments = []) {
+function renderMessage(role, content, attachments = [], messageId = null, bookmarkId = null) {
   const article = document.createElement('article'); article.className = `message ${role}`;
+  if (messageId) article.dataset.messageId = messageId;
   const box = document.createElement('div'); box.className = 'message-content';
   const text = document.createElement('div'); text.className = 'message-text'; text.dataset.source = content || '';
   if (role === 'assistant') renderMarkdown(text, content || ''); else text.textContent = content || '';
   const actions = document.createElement('div'); actions.className = 'message-actions';
   const copy = action('复制', () => copyText(text.dataset.source, copy)); actions.append(copy);
   box.append(text); renderAttachments(box, attachments); box.append(actions); article.append(box); messagesEl.append(article);
+  if (role === 'assistant') { article.dataset.bookmarkId = bookmarkId || ''; window.addBookmarkAction?.(article, bookmarkId); }
   return text;
 }
 function codeButtons(target) {
@@ -211,14 +215,15 @@ function codeButtons(target) {
 }
 function setChatControls() {
   $('.page-title').textContent = currentChat?.title || '新对话';
-  for (const id of ['deleteChat','renameChat','pinChat','archiveChat']) $('#'+id).hidden = !activeChat;
+  for (const id of ['deleteChat','renameChat','pinChat','archiveChat','moveChat']) $('#'+id).hidden = !activeChat;
   $('#pinChat').textContent = currentChat?.pinned ? '取消置顶' : '置顶对话';
   $('#archiveChat').textContent = currentChat?.archived ? '移出归档' : '归档对话';
+  window.syncProjectControls?.();
 }
 async function refreshChats() {
   const revision = ++listRevision;
   const archived = $('#showArchived').checked ? 1 : 0;
-  const chats = await api(`/api/chats?q=${encodeURIComponent($('#chatSearch').value)}&archived=${archived}`);
+  const chats = await api(`/api/chats?q=${encodeURIComponent($('#chatSearch').value)}&archived=${archived}&project=${encodeURIComponent(projectFilter)}`);
   if (revision !== listRevision) return;
   const updated=chats.find(c=>c.id===activeChat); if(updated){currentChat=updated;setChatControls();}
   listEl.replaceChildren();
@@ -228,13 +233,16 @@ async function refreshChats() {
     const date = new Date(chat.updated_at), today = new Date();
     const group = chat.pinned ? '置顶' : date.toDateString() === today.toDateString() ? '今天' : '更早';
     if(group !== lastGroup) { const label=document.createElement('div'); label.className='side-label'; label.textContent=group; listEl.append(label); lastGroup=group; }
-    const button = action(chat.title, () => openChat(chat)); button.className=`chat-item chat-row${activeChat===chat.id?' active':''}`;
-    button.title=chat.title; listEl.append(button);
+    const button = action('', () => openChat(chat)); button.className=`chat-item chat-row${activeChat===chat.id?' active':''}`;
+    const title = document.createElement('span'); title.className='chat-title'; title.textContent=chat.title;
+    const meta = document.createElement('span'); meta.className='chat-meta'; meta.textContent=chat.project_name || '未分组';
+    button.append(title,meta); button.title=chat.title; listEl.append(button);
   }
 }
 function guardNavigation() { if (busy || uploading || loading) { notify('请先停止当前回复或等待上传完成。'); return false; } return true; }
 async function newChat() {
   if (!guardNavigation()) return;
+  window.setWorkspaceView?.('chats');
   await saveDraft(); activeChat=null; currentChat=null; pendingFiles=[]; renderPendingFiles();
   messagesEl.replaceChildren(); welcomeEl.hidden=false; setChatControls(); await restoreDraft(null); closeSidebar();
 }
@@ -248,7 +256,7 @@ async function openChat(chat) {
     activeChat=chat.id; currentChat=chat;
     selectedModel={provider_id:chat.selected_provider || '',model:chat.selected_model || ''}; renderModelOptions();
     pendingFiles=[];renderPendingFiles();messagesEl.replaceChildren();welcomeEl.hidden=!!rows.length;
-    for(const m of rows){const target=renderMessage(m.role,m.content,m.attachments || []);if(m.role==='assistant')codeButtons(target);}
+    for(const m of rows){const target=renderMessage(m.role,m.content,m.attachments || [],m.id,m.bookmark_id);if(m.role==='assistant')codeButtons(target);}
     inputEl.value=local ?? saved.draft ?? '';resizeInput();setChatControls();
     await refreshChats();followLatest=true;scrollReply();closeSidebar();
   } finally { loading=false; }
@@ -294,11 +302,11 @@ async function send(text) {
   const attachments=[...pendingFiles]; let target=null, complete=false;
   try {
     if(!activeChat){
-      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});
+      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model,project_id:projectFilter==='all'||projectFilter==='none'?null:projectFilter})});
       activeChat=chat.id;currentChat=chat;setChatControls();try{sessionStorage.removeItem(`studio-draft:${$('.shell').dataset.userId}:new`);}catch{}
     }
     await saveDraft(); pendingFiles=[];renderPendingFiles();inputEl.value='';resizeInput();await saveDraft();welcomeEl.hidden=true;
-    renderMessage('user',text,attachments);target=renderMessage('assistant','');target.textContent='正在连接…';
+    const userTarget=renderMessage('user',text,attachments);target=renderMessage('assistant','');target.textContent='正在连接…';
     followLatest=true;scrollReply();let liveText='';
     const response=await fetch(`/api/chats/${activeChat}/send`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({message:text,attachments})});
     if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||`发送失败 (${response.status})`);}
@@ -308,11 +316,11 @@ async function send(text) {
         if(event.error)throw new Error(event.error);
         if(event.text){liveText+=event.text;target.textContent=liveText;target.classList.add('streaming-text');}
         if(Object.prototype.hasOwnProperty.call(event,'final')){liveText=event.final||'';target.classList.remove('streaming-text');renderMarkdown(target,liveText);}
-        if(event.done)complete=true;target.dataset.source=liveText;scrollReply();
+        if(event.done){complete=true;if(event.user_message_id)userTarget.closest('.message').dataset.messageId=event.user_message_id;if(event.assistant_message_id)target.closest('.message').dataset.messageId=event.assistant_message_id;}target.dataset.source=liveText;scrollReply();
       }
     }
     if(!complete)throw new Error('连接已中断，回复可能不完整。');
-    target.classList.remove('streaming-text');renderMarkdown(target,liveText || '（本次没有文本回复）');codeButtons(target);
+    target.classList.remove('streaming-text');renderMarkdown(target,liveText || '（本次没有文本回复）');codeButtons(target);window.addBookmarkAction?.(target.closest('.message'),null);
   }catch(error){
     const row=document.createElement('div');row.className='message-error';row.setAttribute('role','alert');row.textContent=error.message+' ';
     row.append(action('恢复输入',()=>{inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();return saveDraft();}));
@@ -320,7 +328,7 @@ async function send(text) {
     if(target&&!target.dataset.source)target.textContent='';
     if(!inputEl.value){inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();try{await saveDraft();}catch{notify('Draft sync failed');}}
   }finally{
-    busy=false;modelSelect.disabled=false;$('#sendButton').disabled=false;$('#stopButton').hidden=true;
+    busy=false;for(const article of messagesEl.querySelectorAll('.message.assistant'))window.addBookmarkAction?.(article,article.dataset.bookmarkId);modelSelect.disabled=false;$('#sendButton').disabled=false;$('#stopButton').hidden=true;document.querySelectorAll('.bookmark-action:not([aria-pressed="true"])').forEach(button=>button.disabled=false);
     try{await refreshChats();}catch(e){notify(e.message);}scrollReply();
   }
 }
@@ -346,7 +354,7 @@ inputEl.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[]
 const composer=$('#composer');composer.ondragover=e=>{e.preventDefault();composer.classList.add('drag-over');};
 composer.ondragleave=()=>composer.classList.remove('drag-over');composer.ondrop=e=>{e.preventDefault();composer.classList.remove('drag-over');uploadFiles([...e.dataTransfer.files]);};
 fileInput.onchange=()=>uploadFiles([...fileInput.files]);
-let searchTimer;$('#chatSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refreshChats().catch(e=>notify(e.message)),200);};
+let searchTimer;$('#chatSearch').oninput=()=>{clearTimeout(searchTimer);if(typeof workspaceMode!=='undefined'&&workspaceMode!=='chats')return;searchTimer=setTimeout(()=>refreshChats().catch(e=>notify(e.message)),200);};
 $('#showArchived').onchange=()=>refreshChats().catch(e=>notify(e.message));
 async function changeChat(patch){if(!activeChat||!guardNavigation())return;await api(`/api/chats/${activeChat}`,{method:'PATCH',body:JSON.stringify(patch)});Object.assign(currentChat,patch);setChatControls();await refreshChats();}
 $('#renameChat').onclick=()=>{const title=prompt('对话名称',currentChat?.title||'');if(title?.trim())changeChat({title:title.trim()}).catch(e=>notify(e.message));};
