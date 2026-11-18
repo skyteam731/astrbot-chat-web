@@ -173,7 +173,16 @@ def load_user():
         if not secrets.compare_digest(str(session.get("_csrf", "")), str(supplied)):
             if request.path.startswith("/api/"):
                 return jsonify(error="请求校验失败，请刷新页面后重试。"), 400
+            if request.endpoint == "login":
+                return redirect(url_for("login", retry="session"), code=303)
             abort(400)
+
+
+@app.after_request
+def prevent_login_cache(response):
+    if request.endpoint == "login":
+        response.cache_control.no_store = True
+    return response
 
 
 @app.context_processor
