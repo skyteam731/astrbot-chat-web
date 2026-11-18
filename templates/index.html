@@ -3,7 +3,6 @@
 {% block body %}
 <svg class="icon-defs" aria-hidden="true"><defs>
 <symbol id="icon-chat" viewBox="0 0 24 24"><path d="M5 5h14v11H9l-4 3V5Z"/></symbol>
-<symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2H10l2 2h6.5a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7Z"/></symbol>
 <symbol id="icon-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4V4Z"/></symbol>
 <symbol id="icon-compose" viewBox="0 0 24 24"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7M15 4l5 5M10 14l2-5 6-6 3 3-6 6-5 2Z"/></symbol>
 <symbol id="icon-template" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></symbol>
@@ -12,35 +11,101 @@
 <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
 <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
 <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+
+<symbol id="icon-sidebar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9 5v14"/></symbol>
+<symbol id="icon-archive" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="4" rx="1"/><path d="M5 9v10h14V9m-9 4h4"/></symbol>
+<symbol id="icon-model" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+<symbol id="icon-file" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4.2 4.2L10 19.4a5 5 0 1 1-7-7L13 2.5M7.5 15l7.6-7.6"/></symbol>
+<symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="icon-more" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></g></symbol>
+<symbol id="icon-exit" viewBox="0 0 24 24"><path d="M10 4H5v16h5m4-4 4-4-4-4m4 4H9"/></symbol>
 </defs></svg>
 <div class="shell" data-user-id="{{ user.id }}" data-is-admin="{{ 1 if user.is_admin else 0 }}">
   <aside class="sidebar" id="sidebar" aria-label="导航与历史记录">
-    <div class="side-brand"><span class="brand-mark" aria-hidden="true">{{ icon('compose') }}</span><div class="brand-copy"><b>请输入文本</b><span>工作室</span></div><button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="关闭侧栏">{{ icon('close') }}</button></div>
-    <button id="newChat" class="new-chat" type="button">{{ icon('plus') }}<span>新建对话</span></button>
-    <nav class="workspace-nav" aria-label="工作空间">
-      <button id="navChats" class="workspace-nav-item active" type="button" data-view="chats">{{ icon('chat') }}<span>全部会话</span></button>
-      <button id="navBookmarks" class="workspace-nav-item" type="button" data-view="bookmarks">{{ icon('bookmark') }}<span>收藏与笔记</span><span class="nav-count" id="bookmarkCount"></span></button>
+    <header class="side-brand">
+      <img src="{{ url_for('static', filename='studio-mark.svg') }}" width="32" height="32" alt="">
+      <strong>请输入文本工作室</strong>
+      <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="关闭侧栏">{{ icon('close') }}</button>
+    </header>
+    <button id="newChat" class="new-chat" type="button">{{ icon('compose') }}新建对话<span class="new-plus" aria-hidden="true">＋</span></button>
+    <nav class="workspace-nav" aria-label="工作室">
+      <button id="navChats" class="workspace-nav-item active" type="button" data-view="chats" aria-current="page">{{ icon('chat') }}全部会话</button>
+      <button id="navBookmarks" class="workspace-nav-item" type="button" data-view="bookmarks">{{ icon('bookmark') }}收藏与笔记<span class="nav-count" id="bookmarkCount"></span></button>
     </nav>
-    <div class="history-heading"><div class="side-label">最近对话</div><label class="search-box"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.5"/><path d="m13 13 4 4"/></svg><input id="chatSearch" type="search" placeholder="搜索历史" aria-label="搜索历史"></label></div>
-    <label class="archive-filter" id="chatArchiveFilter"><input id="showArchived" type="checkbox"><span>显示已归档</span></label>
+    <div class="history-heading">
+      <label class="search-box">{{ icon('search') }}<input id="chatSearch" type="search" placeholder="搜索对话" aria-label="搜索对话" enterkeyhint="search"></label>
+      <div class="history-label"><span>历史记录</span>
+        <label class="archive-filter" id="chatArchiveFilter" title="显示已归档"><input id="showArchived" type="checkbox">归档</label>
+      </div>
+    </div>
     <div id="chatList" class="chat-list"></div>
     <div class="side-bottom">
-      <a href="{{ url_for('profile') }}">{{ icon('user') }}个人资料</a>
-      {% if user.is_admin %}<a href="{{ url_for('admin') }}">{{ icon('settings') }}账号管理</a>{% endif %}
-      <div class="user-row"><div class="avatar">{{ (user.real_name or user.username)[:1]|upper }}</div><div class="user-name"><b>{{ user.real_name or user.username }}</b><small>@{{ user.username }}</small></div><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="icon-button logout-button" type="submit" title="退出登录" aria-label="退出登录"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4H4.5A1.5 1.5 0 0 0 3 5.5v9A1.5 1.5 0 0 0 4.5 16H8M11 6l4 4-4 4m4-4H7"/></svg></button></form></div>
+      {% if user.is_admin %}<a href="{{ url_for('admin') }}" class="settings-link">{{ icon('settings') }}账号管理</a>{% endif %}
+      <div class="user-row">
+        <a class="profile-link" href="{{ url_for('profile') }}" title="个人资料" aria-label="个人资料，{{ user.real_name or user.username }}">
+          <span class="avatar" aria-hidden="true">{{ (user.real_name or user.username)[:1]|upper }}</span>
+          <span class="user-name"><b>{{ user.real_name or user.username }}</b><small>个人资料</small></span>
+        </a>
+        <form method="post" action="{{ url_for('logout') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button class="icon-button" type="submit" title="退出登录" aria-label="退出登录">{{ icon('exit') }}</button>
+        </form>
+      </div>
     </div>
   </aside>
-  <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="关闭导航"></button>
+  <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" tabindex="-1" aria-label="关闭导航"></button>
   <main class="main">
-    <header class="topbar"><button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-label="切换侧栏" aria-controls="sidebar"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M8 4v13"/></svg></button><div class="page-title">请输入文本工作室</div><div class="top-right"><label class="model-control"><span>模型</span><select id="modelSelect"><option value="">读取模型中…</option></select></label><details class="chat-menu" id="chatMenu"><summary aria-label="当前对话选项" title="当前对话选项">•••</summary><div class="chat-menu-items"><button id="renameChat" type="button">重命名</button><button id="pinChat" type="button">置顶对话</button><button id="archiveChat" type="button">归档对话</button><button id="deleteChat" class="danger-action" type="button" hidden>删除对话</button></div></details></div></header>
-    <div id="notice" class="notice live-notice" role="status" aria-live="polite" hidden></div>
-    <section id="conversation" class="conversation"><div id="welcome" class="welcome"><div class="welcome-copy"><span class="welcome-mark" aria-hidden="true">{{ icon('compose') }}</span><p class="welcome-eyebrow">请输入文本工作室</p><h1>你好，{{ user.real_name or user.username }}</h1><p>想法，从这里开始。</p><div class="welcome-shortcuts"><button type="button" onclick="openTemplates()">{{ icon('template') }}使用模板</button><button type="button" onclick="document.getElementById('fileInput').click()">{{ icon('plus') }}添加文件</button></div></div></div><div id="messages" class="messages"></div></section>
-    <section id="workspaceMain" class="workspace-main" hidden><div id="bookmarksPage" class="workspace-page" hidden><header class="workspace-page-header"><div><p class="dialog-eyebrow">收藏与笔记</p><h1>收藏的回答</h1><p class="workspace-description">已保存的回答快照会保留，来源会话删除后仍可阅读。</p></div></header><label class="search-box bookmark-page-search">{{ icon('search') }}<input id="bookmarkPageSearch" type="search" placeholder="搜索收藏"></label><div id="bookmarkResults" class="bookmark-grid"></div></div></section>
-    <button id="jumpLatest" class="jump-latest" type="button" hidden>↓ <span>回到最新消息</span></button>
-    <form id="composer" class="composer"><div id="uploadQueue" class="upload-queue" aria-live="polite"></div><div id="pendingFiles" class="pending-files"></div><div class="composer-box"><div class="composer-topline"><button id="openTemplates" type="button" class="template-trigger">{{ icon('template') }}<span>提示模板</span></button></div><textarea id="messageInput" rows="1" placeholder="输入内容，或添加照片和文件…" maxlength="20000"></textarea><div class="composer-foot"><div class="composer-tools"><label for="fileInput" class="attach-button" title="添加照片或文件">{{ icon('plus') }}<span>添加文件</span></label><input id="fileInput" type="file" multiple hidden><span class="key-hint">Enter 发送　·　Shift + Enter 换行</span></div><div class="send-controls"><button id="stopButton" class="stop-button" type="button" hidden>停止</button><button id="sendButton" class="send-button" type="submit" aria-label="发送"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5m-4 4 4-4 4 4"/></svg></button></div></div></div></form>
+    <header class="topbar">
+      <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧栏" aria-controls="sidebar">{{ icon('sidebar') }}</button>
+      <span class="toolbar-divider" aria-hidden="true"></span><div class="page-title">新对话</div>
+      <label class="model-control" title="选择模型">{{ icon('model') }}<select id="modelSelect" aria-label="选择模型"><option value="">读取模型中…</option></select></label>
+      <details class="chat-menu" id="chatMenu" hidden>
+        <summary class="icon-button" aria-label="当前对话选项" title="当前对话选项">{{ icon('more') }}</summary>
+        <div class="chat-menu-items"><button id="renameChat" type="button">重命名</button><button id="pinChat" type="button">置顶对话</button><button id="archiveChat" type="button">归档对话</button><button id="deleteChat" class="danger-action" type="button">删除对话</button></div>
+      </details>
+    </header>
+    <div id="notice" class="live-notice" role="status" aria-live="polite" hidden></div>
+    <div id="chatSurface" class="chat-surface is-empty">
+      <section id="conversation" class="conversation" aria-label="对话">
+        <div id="welcome" class="welcome">
+          <div class="welcome-heading"><time id="welcomeDate"></time><h1>你好，<bdi>{{ user.real_name or user.username }}</bdi></h1></div>
+          <img class="welcome-art" src="{{ url_for('static', filename='paper-plane.webp', v='1.4.0') }}" width="176" height="124" alt="" draggable="false">
+        </div>
+        <div id="messages" class="messages"></div>
+      </section>
+      <form id="composer" class="composer">
+        <button id="jumpLatest" class="jump-latest" type="button" hidden>↓ 回到最新消息</button>
+        <div class="composer-box">
+          <div class="attachment-tray"><div id="uploadQueue" class="upload-queue" aria-live="polite"></div><div id="pendingFiles" class="pending-files"></div></div>
+          <textarea id="messageInput" rows="1" placeholder="写点什么…" aria-label="消息内容" maxlength="20000"></textarea>
+          <div class="composer-foot">
+            <div class="composer-tools">
+              <button type="button" id="attachFile" class="tool-button" title="添加照片或文件">{{ icon('file') }}附件</button>
+              <input id="fileInput" type="file" multiple hidden>
+              <button id="openTemplates" type="button" class="tool-button" title="选择提示模板">{{ icon('template') }}模板</button>
+            </div>
+            <div class="send-controls">
+              <button id="stopButton" type="button" class="stop-button" hidden>停止</button>
+              <button id="sendButton" type="submit" class="send-button" aria-label="发送" title="发送">{{ icon('arrow') }}</button>
+            </div>
+          </div>
+        </div>
+        <div id="quickTemplates" class="quick-templates" aria-label="常用模板"></div>
+      </form>
+    </div>
+    <section id="workspaceMain" class="workspace-main" hidden>
+      <div id="bookmarksPage" class="workspace-page" hidden>
+        <header class="workspace-page-header"><h1>收藏与笔记</h1><label class="search-box">{{ icon('search') }}<input id="bookmarkPageSearch" aria-label="搜索收藏" type="search" placeholder="搜索收藏" enterkeyhint="search"></label></header>
+        <div id="bookmarkResults" class="bookmark-grid"></div>
+      </div>
+    </section>
   </main>
 </div>
-<dialog id="workspaceDialog" class="workspace-dialog" aria-labelledby="dialogTitle"><div class="dialog-shell"><header class="dialog-header"><div><p class="dialog-eyebrow" id="dialogEyebrow">工作空间</p><h2 id="dialogTitle">管理</h2></div><button id="dialogClose" class="icon-button" type="button" aria-label="关闭对话框">{{ icon('close') }}</button></header><div id="dialogBody" class="dialog-body"></div></div></dialog>
-<script src="{{ url_for('static', filename='vendor/markdown-it/markdown-it.min.js', v='15.0.3') }}"></script><script src="{{ url_for('static', filename='vendor/dompurify/purify.min.js', v='3.4.18') }}"></script><script src="{{ url_for('static', filename='vendor/katex/katex.min.js', v='0.19.1') }}"></script><script src="{{ url_for('static', filename='app.js', v='1.3.1') }}"></script>
-<script src="{{ url_for('static', filename='workspace.js', v='1.3.1') }}"></script>
+<dialog id="workspaceDialog" class="workspace-dialog" aria-labelledby="dialogTitle">
+  <div class="dialog-shell"><header class="dialog-header"><h2 id="dialogTitle">提示模板</h2>
+    <button id="dialogClose" class="icon-button" type="button" aria-label="关闭对话框">{{ icon('close') }}</button>
+  </header><div id="dialogBody" class="dialog-body"></div><div id="dialogNotice" role="status" hidden></div></div>
+</dialog>
+<script src="{{ url_for('static', filename='vendor/markdown-it/markdown-it.min.js', v='15.0.3') }}"></script><script src="{{ url_for('static', filename='vendor/dompurify/purify.min.js', v='3.4.18') }}"></script><script src="{{ url_for('static', filename='vendor/katex/katex.min.js', v='0.19.1') }}"></script><script src="{{ url_for('static', filename='app.js', v='1.4.0') }}"></script>
+<script src="{{ url_for('static', filename='workspace.js', v='1.4.0') }}"></script>
 {% endblock %}

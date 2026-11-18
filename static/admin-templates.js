@@ -76,9 +76,7 @@
       empty.className = 'public-template-empty';
       const title = document.createElement('b');
       title.textContent = search.value.trim() ? '没有匹配的模板' : '还没有公共模板';
-      const detail = document.createElement('p');
-      detail.textContent = search.value.trim() ? '试试其他关键词。' : '创建后，所有账号都能在提示模板中找到它。';
-      empty.append(title, detail);
+      empty.append(title);
       list.append(empty);
       return;
     }
