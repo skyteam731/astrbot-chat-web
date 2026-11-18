@@ -383,13 +383,13 @@ class WorkspaceApiTests(unittest.TestCase):
 
     def test_stable_message_ids_and_persisted_assistant_id_in_sse_done(self):
         chat_id = self.seed_chat("message-chat", 1)
-        upstream = Mock(status_code=200)
+        upstream = Mock(status_code=200, headers={"Content-Type": "text/event-stream"})
         upstream.__enter__ = Mock(return_value=upstream)
         upstream.__exit__ = Mock(return_value=False)
         # requests.iter_lines(decode_unicode=True) yields decoded text strings.
         upstream.iter_lines.return_value = ['data: {"type":"complete","data":"Assistant answer"}']
         with patch.object(appmod.requests, "post", return_value=upstream):
-            response = self.call_json(self.alice, "post", f"/api/chats/{chat_id}/send", {"message": "Question"}, self.alice_csrf)
+            response = self.alice.post(f"/api/chats/{chat_id}/send", json={"message": "Question"}, headers=self.alice_csrf, buffered=True)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         events = []
         for frame in response.get_data(as_text=True).split("\n\n"):
@@ -407,6 +407,34 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertTrue(user_rows[0].get("id"))
         self.assertTrue(all(item.get("id") for item in assistant_rows + user_rows))
         self.assertEqual(self.bob.get(f"/api/chats/{chat_id}/messages").status_code, 404)
+
+    def test_rate_limited_model_reports_a_terminal_error_without_saving_a_reply(self):
+        chat_id = self.seed_chat("rate-limit-chat", 1)
+        upstream = Mock(status_code=429)
+        upstream.__enter__ = Mock(return_value=upstream)
+        upstream.__exit__ = Mock(return_value=False)
+        with patch.object(appmod.requests, "post", return_value=upstream):
+            response = self.alice.post(f"/api/chats/{chat_id}/send", json={"message": "Question"}, headers=self.alice_csrf, buffered=True)
+        frames = response.get_data(as_text=True)
+        self.assertIn('"status": "waiting"', frames)
+        self.assertIn("模型服务限流", frames)
+        self.assertNotIn('"done"', frames)
+        messages = self.alice.get(f"/api/chats/{chat_id}/messages").json
+        self.assertEqual([message["role"] for message in messages], ["user"])
+
+    def test_stop_distinguishes_refusal_from_upstream_acceptance(self):
+        chat_id = self.seed_chat("stop-owner", 1)
+        upstream = Mock()
+        with patch.object(appmod.requests, "post", return_value=upstream) as post:
+            url = f"/api/chats/{chat_id}/stop"
+            self.assertEqual(self.bob.post(url, headers=self.bob_csrf).status_code, 404)
+            post.assert_not_called()
+            upstream.json.return_value = {"status": "error", "message": "Permission denied"}
+            self.assertEqual(self.alice.post(url, headers=self.alice_csrf).status_code, 409)
+            upstream.json.return_value = {"status": "ok", "data": {"stopped_count": 0}}
+            self.assertFalse(self.alice.post(url, headers=self.alice_csrf).json["stopped"])
+            upstream.json.return_value = {"status": "ok", "data": {"stopped_count": 1}}
+            self.assertTrue(self.alice.post(url, headers=self.alice_csrf).json["stopped"])
 
     def test_installed_astrbot_owner_refusal_keeps_history_and_explains_archive(self):
         chat_id = self.seed_chat("owner-refused", 1)

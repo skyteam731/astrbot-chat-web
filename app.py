@@ -4,6 +4,7 @@ import re
 import secrets
 import sqlite3
 import threading
+from time import monotonic
 import uuid
 from datetime import datetime, timezone
 
@@ -510,6 +511,14 @@ def preview_attachment(attachment_id):
         abort(502)
 
 
+def model_reply_error(detail):
+    if re.search(r"\b429\b|rate.limit|RESOURCE_EXHAUSTED", detail, re.IGNORECASE):
+        return "模型服务限流，请稍后重试或切换模型。"
+    if re.search(r"timed out|timeout", detail, re.IGNORECASE):
+        return "模型回复超时，请稍后重试。"
+    return "AstrBot 未能完成回复，请稍后重试。"
+
+
 @app.post("/api/chats/<chat_id>/send")
 @login_required
 def send_message(chat_id):
@@ -551,48 +560,63 @@ def send_message(chat_id):
     headers = {"Authorization": f"Bearer {ASTRBOT_API_KEY}", "Content-Type": "application/json", "Accept": "text/event-stream"}
 
     def generate():
-        collected = []
+        streamed_parts = []
+        final_answer = None
+        reply_deadline = monotonic() + 70
+        yield "data: " + json.dumps({"status": "waiting", "user_message_id": user_message_id}) + "\n\n"
         try:
             if not ASTRBOT_API_KEY:
                 raise RuntimeError("AstrBot API Key 尚未配置")
-            with requests.post(f"{ASTRBOT_URL}/api/v1/chat", headers=headers, json=payload, stream=True, timeout=(10, 300)) as upstream:
+            with requests.post(f"{ASTRBOT_URL}/api/v1/chat", headers=headers, json=payload, stream=True, timeout=(10, 65)) as upstream:
                 if upstream.status_code >= 400:
-                    detail = upstream.text[:1000]
-                    yield "data: " + json.dumps({"error": f"AstrBot 返回 {upstream.status_code}: {detail}"}, ensure_ascii=False) + "\n\n"
+                    error = "模型服务限流，请稍后重试或切换模型。" if upstream.status_code == 429 else f"AstrBot 请求失败（{upstream.status_code}）。"
+                    yield "data: " + json.dumps({"error": error}, ensure_ascii=False) + "\n\n"
                     return
-                streamed_parts = []
-                final_answer = None
+                if upstream.headers.get("Content-Type", "").startswith("application/json"):
+                    result = upstream.json()
+                    detail = str(result.get("message", "")) if isinstance(result, dict) else ""
+                    error = model_reply_error(detail)
+                    yield "data: " + json.dumps({"error": error}, ensure_ascii=False) + "\n\n"
+                    return
                 for line in upstream.iter_lines(decode_unicode=True):
-                    if not line:
+                    if monotonic() >= reply_deadline:
+                        raise TimeoutError("model reply timed out")
+                    if line and line.startswith(":"):
+                        yield ": heartbeat\n\n"
+                    if not line or not line.startswith("data:"):
                         continue
-                    if line.startswith("data:"):
-                        raw = line[5:].strip()
-                        if raw == "[DONE]":
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    event_type = event.get("type")
+                    if event_type == "plain":
+                        if event.get("chain_type") in ("reasoning", "tool_call", "tool_call_result"):
                             continue
-                        try:
-                            event = json.loads(raw)
-                        except (TypeError, json.JSONDecodeError):
-                            continue
-                        event_type = event.get("type") if isinstance(event, dict) else None
-                        if event_type == "plain":
-                            if event.get("chain_type") in ("reasoning", "tool_call", "tool_call_result"):
-                                continue
-                            text = str(event.get("data") or "")
-                            if text:
-                                streamed_parts.append(text)
-                                yield "data: " + json.dumps({"text": text}, ensure_ascii=False) + "\n\n"
-                        elif event_type == "complete":
-                            final_answer = str(event.get("data") or "") or "".join(streamed_parts)
-                            yield "data: " + json.dumps({"final": final_answer}, ensure_ascii=False) + "\n\n"
-                        elif event_type == "error":
-                            detail = str(event.get("data") or "AstrBot 处理失败")
-                            yield "data: " + json.dumps({"error": detail}, ensure_ascii=False) + "\n\n"
-                            return
-                collected = [final_answer if final_answer is not None else "".join(streamed_parts)]
-        except Exception as exc:
-            yield "data: " + json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n\n"
-            collected = []
-        answer = "".join(collected)
+                        text = str(event.get("data") or "")
+                        if text:
+                            streamed_parts.append(text)
+                            reply_deadline = monotonic() + 70
+                            yield "data: " + json.dumps({"text": text}, ensure_ascii=False) + "\n\n"
+                    elif event_type == "complete":
+                        final_answer = str(event.get("data") or "") or "".join(streamed_parts)
+                        if final_answer:
+                            reply_deadline = monotonic() + 70
+                        yield "data: " + json.dumps({"final": final_answer}, ensure_ascii=False) + "\n\n"
+                    elif event_type == "error":
+                        error = model_reply_error(str(event.get("data") or ""))
+                        yield "data: " + json.dumps({"error": error}, ensure_ascii=False) + "\n\n"
+                        return
+        except (requests.RequestException, TimeoutError, ValueError, RuntimeError) as exc:
+            error = model_reply_error(str(exc))
+            yield "data: " + json.dumps({"error": error}, ensure_ascii=False) + "\n\n"
+            return
+        answer = final_answer if final_answer is not None else "".join(streamed_parts)
         assistant_message_id = None
         with db_lock:
             with sqlite3.connect(DB_PATH, timeout=30) as conn:
@@ -611,14 +635,20 @@ def stop_chat(chat_id):
     if not db().execute("SELECT id FROM chats WHERE id=? AND user_id=?", (chat_id, g.user["id"])).fetchone():
         abort(404)
     try:
-        response = requests.post(f"{ASTRBOT_URL}/api/v1/chat/sessions/{chat_id}/stop", params={"username": f"mtu_{g.user['id']}"}, headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=15)
+        response = requests.post(f"{ASTRBOT_URL}/api/v1/chat/sessions/{chat_id}/stop", headers={"Authorization": f"Bearer {ASTRBOT_API_KEY}"}, timeout=8)
         response.raise_for_status()
         result = response.json()
-        if isinstance(result, dict) and result.get("status") == "error":
-            return jsonify(error="停止请求未成功，请稍后重试。"), 502
-        return jsonify(ok=True)
+        if not isinstance(result, dict):
+            return jsonify(error="AstrBot 未确认停止。"), 502
+        if result.get("status") == "error":
+            if "permission denied" in str(result.get("message", "")).lower():
+                return jsonify(error="AstrBot 拒绝用当前 API Key 停止此会话。"), 409
+            return jsonify(error="AstrBot 未确认停止。"), 502
+        data = result.get("data")
+        count = data.get("stopped_count") if isinstance(data, dict) else result.get("stopped_count")
+        return jsonify(ok=True, stopped=isinstance(count, int) and count > 0)
     except (requests.RequestException, ValueError):
-        return jsonify(error="暂时无法停止上游任务，请稍后重试。"), 502
+        return jsonify(error="暂时无法联系 AstrBot 停止任务。"), 502
 
 
 @app.delete("/api/chats/<chat_id>")

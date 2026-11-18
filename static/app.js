@@ -325,46 +325,176 @@ async function uploadFiles(files) {
       row.append(action('重试',()=>{row.remove();return uploadFiles([file]);}),action('移除',()=>row.remove()));$('#uploadQueue').append(row); }
   }} finally{uploading--;$('#sendButton').disabled=false;fileInput.value='';}
 }
+const modelIdleTimeout = 75000;
+const pendingStops = new Set();
+let activeSend = null;
+
 async function send(text) {
-  text=text.trim(); if((!text&&!pendingFiles.length)||busy||uploading||loading)return;
-  busy=true;for(const button of messagesEl.querySelectorAll('.bookmark-action,.template-followup'))button.disabled=true; notify(''); modelSelect.disabled=true; $('#sendButton').disabled=true; $('#stopButton').hidden=false;
-  const attachments=[...pendingFiles]; let target=null, complete=false;
+  text = text.trim();
+  if ((!text && !pendingFiles.length) || busy || uploading || loading) return;
+  if (pendingStops.has(activeChat)) {
+    notify('正在确认上一条回复是否已停止，请稍候。');
+    return;
+  }
+
+  busy = true;
+  for (const button of messagesEl.querySelectorAll('.bookmark-action,.template-followup')) button.disabled = true;
+  notify('');
+  modelSelect.disabled = true;
+  $('#sendButton').disabled = true;
+  const stopButton = $('#stopButton');
+  const attachments = [...pendingFiles];
+  let target = null;
+  let idleTimer;
+
+  const operation = { controller: new AbortController(), stopResult: null, timedOut: false };
+  function watchForReply() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      operation.timedOut = true;
+      operation.controller.abort();
+    }, modelIdleTimeout);
+  }
+  function restoreInput() {
+    inputEl.value = text;
+    pendingFiles = attachments;
+    renderPendingFiles();
+    resizeInput();
+    return saveDraft();
+  }
+
   try {
-    if(!activeChat){
-      const chat=await api('/api/chats',{method:'POST',body:JSON.stringify({selected_provider:selectedModel.provider_id,selected_model:selectedModel.model})});
-      activeChat=chat.id;currentChat=chat;setChatControls();try{sessionStorage.removeItem(`studio-draft:${$('.shell').dataset.userId}:new`);}catch{}
+    if (!activeChat) {
+      const chat = await api('/api/chats', {
+        method: 'POST',
+        body: JSON.stringify({selected_provider: selectedModel.provider_id, selected_model: selectedModel.model})
+      });
+      activeChat = chat.id;
+      currentChat = chat;
+      setChatControls();
+      try { sessionStorage.removeItem(`studio-draft:${$('.shell').dataset.userId}:new`); } catch {}
     }
-    await saveDraft(); pendingFiles=[];renderPendingFiles();inputEl.value='';resizeInput();await saveDraft();setWelcome(false);
-    const userTarget=renderMessage('user',text,attachments);target=renderMessage('assistant','');target.textContent='正在连接…';
-    followLatest=true;scrollReply();let liveText='';
-    const response=await fetch(`/api/chats/${activeChat}/send`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({message:text,attachments})});
-    if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||`发送失败 (${response.status})`);}
-    const reader=response.body.getReader(), decoder=new TextDecoder();let buffer='';
-    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const frames=buffer.split('\n\n');buffer=frames.pop();
-      for(const frame of frames){const line=frame.split('\n').find(line=>line.startsWith('data:'));if(!line)continue;const event=JSON.parse(line.slice(5));
-        if(event.error)throw new Error(event.error);
-        if(event.text){liveText+=event.text;target.textContent=liveText;target.classList.add('streaming-text');}
-        if(Object.prototype.hasOwnProperty.call(event,'final')){liveText=event.final||'';target.classList.remove('streaming-text');renderMarkdown(target,liveText);}
-        if(event.done){complete=true;if(event.user_message_id)userTarget.closest('.message').dataset.messageId=event.user_message_id;if(event.assistant_message_id)target.closest('.message').dataset.messageId=event.assistant_message_id;}target.dataset.source=liveText;scrollReply();
+    pendingFiles = [];
+    renderPendingFiles();
+    inputEl.value = '';
+    resizeInput();
+    saveDraft().catch(() => notify('草稿同步失败'));
+    setWelcome(false);
+    const userTarget = renderMessage('user', text, attachments);
+    target = renderMessage('assistant', '');
+    target.textContent = '正在连接…';
+    followLatest = true;
+    scrollReply();
+
+    operation.chatId = activeChat;
+    activeSend = operation;
+    stopButton.hidden = false;
+    watchForReply();
+    const response = await fetch(`/api/chats/${activeChat}/send`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+      body: JSON.stringify({message: text, attachments}),
+      signal: operation.controller.signal
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `发送失败 (${response.status})`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let liveText = '';
+    let complete = false;
+    while (!complete) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+      for (const frame of frames) {
+        const line = frame.split('\n').find(part => part.startsWith('data:'));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(5));
+        if (event.error) throw new Error(event.error);
+        if (event.user_message_id) userTarget.closest('.message').dataset.messageId = event.user_message_id;
+        if (event.status === 'waiting' && !liveText) target.textContent = '等待模型回复…';
+        if (event.text) {
+          liveText += event.text;
+          target.textContent = liveText;
+          target.classList.add('streaming-text');
+          watchForReply();
+        }
+        if (Object.prototype.hasOwnProperty.call(event, 'final')) {
+          liveText = event.final || '';
+          target.classList.remove('streaming-text');
+          renderMarkdown(target, liveText);
+          if (liveText) watchForReply();
+        }
+        target.dataset.source = liveText;
+        if (event.done) {
+          complete = true;
+          if (event.assistant_message_id) target.closest('.message').dataset.messageId = event.assistant_message_id;
+          break;
+        }
+        scrollReply();
       }
     }
-    if(!complete)throw new Error('连接已中断，回复可能不完整。');
-    target.classList.remove('streaming-text');renderMarkdown(target,liveText || '（本次没有文本回复）');codeButtons(target);window.addBookmarkAction?.(target.closest('.message'),null);
-  }catch(error){
-    const row=document.createElement('div');row.className='message-error';row.setAttribute('role','alert');row.textContent=error.message+' ';
-    row.append(action('恢复输入',()=>{inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();return saveDraft();}));
+    if (!complete) throw new Error('连接已中断，回复可能不完整。');
+    reader.cancel().catch(() => {});
+    target.classList.remove('streaming-text');
+    renderMarkdown(target, liveText || '（本次没有文本回复）');
+    codeButtons(target);
+  } catch (error) {
+    operation.controller.abort();
+    const row = document.createElement('div');
+    row.className = 'message-error';
+    row.setAttribute('role', 'alert');
+    const message = document.createElement('span');
+    if (operation.stopResult) {
+      message.textContent = '已停止网页等待。正在确认上游状态。';
+      operation.stopResult.then(stopped => {
+        message.textContent = stopped
+          ? '已停止网页等待。AstrBot 已接受停止请求。'
+          : '已停止网页等待。上游停止未确认，模型可能仍在处理。';
+      });
+    } else {
+      message.textContent = operation.timedOut ? '模型回复超时，网页已停止等待。' : error.message;
+    }
+    row.append(message, action('恢复输入', restoreInput));
     (target?.parentElement || messagesEl).append(row);
-    if(target&&!target.dataset.source)target.textContent='';
-    if(!inputEl.value){inputEl.value=text;pendingFiles=attachments;renderPendingFiles();resizeInput();try{await saveDraft();}catch{notify('草稿同步失败');}}
-  }finally{
-    busy=false;for(const article of messagesEl.querySelectorAll('.message.assistant'))window.addBookmarkAction?.(article,article.dataset.bookmarkId);modelSelect.disabled=false;$('#sendButton').disabled=false;$('#stopButton').hidden=true;document.querySelectorAll('.bookmark-action:not([aria-pressed="true"])').forEach(button=>button.disabled=false);
-    try{await refreshChats();}catch(e){notify(e.message);}scrollReply();
+    if (target && !target.dataset.source) target.textContent = '';
+    if (!inputEl.value) restoreInput().catch(() => notify('草稿同步失败'));
+  } finally {
+    clearTimeout(idleTimer);
+    activeSend = null;
+    busy = false;
+    for (const article of messagesEl.querySelectorAll('.message.assistant')) {
+      window.addBookmarkAction?.(article, article.dataset.bookmarkId);
+    }
+    modelSelect.disabled = false;
+    $('#sendButton').disabled = false;
+    stopButton.hidden = true;
+    stopButton.disabled = false;
+    refreshChats().catch(error => notify(error.message));
+    scrollReply();
   }
 }
-$('#stopButton').onclick=async()=>{
-  if(!activeChat)return;$('#stopButton').disabled=true;
-  try{await api(`/api/chats/${activeChat}/stop`,{method:'POST'});notify('已请求停止生成。');}
-  catch(e){notify(e.message);}finally{$('#stopButton').disabled=false;}
+
+$('#stopButton').onclick = () => {
+  const operation = activeSend;
+  if (!operation || operation.stopResult) return;
+  const chatId = operation.chatId;
+  pendingStops.add(chatId);
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 10000);
+  operation.stopResult = api(`/api/chats/${chatId}/stop`, {method: 'POST', signal: controller.signal})
+    .then(result => result?.stopped === true, () => false)
+    .finally(() => {
+      clearTimeout(deadline);
+      pendingStops.delete(chatId);
+    });
+  operation.controller.abort();
 };
 const drawerMedia = matchMedia('(max-width: 900px)');
 function syncSidebarAccess() {
