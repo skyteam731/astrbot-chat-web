@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.0
+
+- Redesign the chat window, login and account settings in light gray and white with a shared paper-plane identity.
+- Place the composer next to the greeting in new conversations and dock it below the message list during a chat.
+- Add quick template previews and a searchable picker grouped by shared, personal and example templates.
+- Improve mobile drawer focus, short-viewport layouts and touch targets.
+
 ## v1.3.1
 
 - Disable project space and remove all project controls while preserving existing data and conversations.
