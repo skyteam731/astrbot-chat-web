@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.4.2
+
+- Report model wait, rate limiting and reply timeouts. End the browser wait immediately on stop and report whether AstrBot accepted cancellation. Preserve unsent input for retry.
+
 ## v1.4.1
 
 - Refresh the sign-in form when its session validation expires and prevent browsers from caching the sign-in page.
