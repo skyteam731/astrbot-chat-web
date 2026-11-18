@@ -9,6 +9,9 @@
 
     <header class="login-intro"><h1 id="loginTitle">登录</h1></header>
     {% for category,message in notices %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}
+    {% if request.args.get('retry') == 'session' %}
+    <div class="notice warning" role="status">登录页面已刷新，请重新输入账号和密码。若反复出现，请检查浏览器是否允许 Cookie。</div>
+    {% endif %}
     {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 
     <form class="login-form" method="post" action="{{ url_for('login') }}">

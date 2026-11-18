@@ -202,6 +202,29 @@ class WorkspaceApiTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT filename FROM attachments WHERE attachment_id='legacy-file'").fetchone()[0], "old.txt")
         legacy_tmp.cleanup()
 
+    def test_stale_login_form_redirects_to_fresh_uncached_form(self):
+        original = appmod.app.test_client()
+        fresh = appmod.app.test_client()
+        original.get("/login")
+        with original.session_transaction() as session:
+            stale_token = session["_csrf"]
+
+        response = fresh.post("/login", data={"_csrf": stale_token})
+        self.assertEqual(response.status_code, 303)
+        self.assertTrue(response.cache_control.no_store)
+        self.assertEqual(response.location, "/login?retry=session")
+
+        page = fresh.get(response.location)
+        self.assertEqual(page.status_code, 200)
+        self.assertTrue(page.cache_control.no_store)
+        self.assertIn("登录页面已刷新".encode(), page.data)
+        with fresh.session_transaction() as session:
+            new_token = session["_csrf"]
+        self.assertNotEqual(stale_token, new_token)
+        retry = fresh.post("/login", data={"_csrf": new_token})
+        self.assertEqual(retry.status_code, 200)
+        self.assertIn("用户名或密码不正确".encode(), retry.data)
+
     def test_csrf_mutations_without_token_are_rejected(self):
         response = self.alice.post("/api/projects", json={"name": "No CSRF"})
         self.assertEqual(response.status_code, 400)

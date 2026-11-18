@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.4.1
+
+- Refresh the sign-in form when its session validation expires and prevent browsers from caching the sign-in page.
+
 ## v1.4.0
 
 - Redesign the chat window, login and account settings in light gray and white with a shared paper-plane identity.
